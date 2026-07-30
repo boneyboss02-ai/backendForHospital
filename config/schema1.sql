@@ -239,28 +239,6 @@ CREATE TABLE notifications (
 );
 
 -- ============================================
--- MESSAGING (doctor <-> patient chat)
--- One thread per (patient, doctor) pair. See migration_004_chat.sql for
--- the same tables applied to an existing database.
--- ============================================
-CREATE TABLE conversations (
-    id SERIAL PRIMARY KEY,
-    patient_id INTEGER NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
-    doctor_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    created_at TIMESTAMP DEFAULT NOW(),
-    UNIQUE(patient_id, doctor_id)
-);
-
-CREATE TABLE messages (
-    id SERIAL PRIMARY KEY,
-    conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
-    sender_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    body TEXT NOT NULL,
-    read_at TIMESTAMP,
-    created_at TIMESTAMP DEFAULT NOW()
-);
-
--- ============================================
 -- PASSWORD RESET
 -- ============================================
 CREATE TABLE password_reset_tokens (
@@ -312,9 +290,6 @@ CREATE INDEX idx_admissions_patient ON admissions(patient_id);
 CREATE INDEX idx_beds_status ON beds(status);
 CREATE INDEX idx_invoices_patient ON invoices(patient_id);
 CREATE INDEX idx_notifications_user ON notifications(user_id, read_at, created_at DESC);
-CREATE INDEX idx_conversations_doctor ON conversations(doctor_id);
-CREATE INDEX idx_conversations_patient ON conversations(patient_id);
-CREATE INDEX idx_messages_conversation_created ON messages(conversation_id, created_at);
 
 -- Prevents two appointments being booked for the same doctor at the exact
 -- same timestamp (race-condition guard on top of the app-level availability

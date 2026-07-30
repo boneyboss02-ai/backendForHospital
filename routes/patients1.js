@@ -175,8 +175,8 @@ router.post('/:id/invite', authenticate, authorize('admin', 'receptionist'), asy
     if (generatedPassword) {
       await sendMail({
         to: email,
-        subject: 'Your Yoma patient portal account',
-        text: `Hi ${patient.full_name},\n\nAn account has been created for you on the Yoma patient portal.\n\nEmail: ${email}\nTemporary password: ${generatedPassword}\n\nYou'll be asked to set your own password the first time you log in.`,
+        subject: 'Your Wardline patient portal account',
+        text: `Hi ${patient.full_name},\n\nAn account has been created for you on the Wardline patient portal.\n\nEmail: ${email}\nTemporary password: ${generatedPassword}\n\nYou'll be asked to set your own password the first time you log in.`,
       });
     }
 

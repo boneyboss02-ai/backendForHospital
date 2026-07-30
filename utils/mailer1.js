@@ -37,7 +37,7 @@ function getTransporter() {
 async function sendMail({ to, subject, text, html }) {
   try {
     const t = getTransporter();
-    await t.sendMail({ from: process.env.SMTP_FROM || 'Yoma <no-reply@yoma.clinic>', to, subject, text, html });
+    await t.sendMail({ from: process.env.SMTP_FROM || 'Wardline <no-reply@wardline.local>', to, subject, text, html });
     return true;
   } catch (err) {
     // Email failures should never break the calling request (e.g. don't

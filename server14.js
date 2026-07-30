@@ -14,7 +14,6 @@ const labRoutes = require('./routes/lab');
 const portalRoutes = require('./routes/portal');
 const notificationRoutes = require('./routes/notifications');
 const shiftRoutes = require('./routes/shifts');
-const chatRoutes = require('./routes/chat');
 const { init: initSocket } = require('./utils/socket');
 
 const app = express();
@@ -35,7 +34,6 @@ app.use('/api/lab', labRoutes);
 app.use('/api/portal', portalRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/shifts', shiftRoutes);
-app.use('/api/chat', chatRoutes);
 
 // NOTE: uploaded lab result files are intentionally NOT served via
 // express.static — they're only ever handed out through the authenticated

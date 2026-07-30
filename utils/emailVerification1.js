@@ -25,7 +25,7 @@ async function issueVerificationCode(dbOrClient, user) {
 
   await sendMail({
     to: user.email,
-    subject: 'Your Yoma verification code',
+    subject: 'Your Wardline verification code',
     text: `Hi ${user.full_name},\n\nYour verification code is: ${code}\n\nThis code expires in ${CODE_EXPIRY_MINUTES} minutes. Enter it on the sign-up page to activate your account.\n\nIf you didn't request this, you can ignore this email.`,
   });
 }

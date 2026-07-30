@@ -54,6 +54,6 @@ const PORT = process.env.PORT || 4000;
 const server = http.createServer(app);
 initSocket(server);
 server.listen(PORT, () => {
-  console.log(`Yoma API running on http://localhost:${PORT}`);
+  console.log(`Hospital system API running on http://localhost:${PORT}`);
   console.log(`Websocket notifications active on the same port.`);
 });

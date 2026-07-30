@@ -398,7 +398,7 @@ router.post('/forgot-password', async (req, res) => {
     const resetUrl = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/reset-password?token=${rawToken}`;
     await sendMail({
       to: email,
-      subject: 'Reset your Yoma password',
+      subject: 'Reset your Wardline password',
       text: `Hi ${user.full_name},\n\nSomeone (hopefully you) requested a password reset. This link expires in 1 hour:\n\n${resetUrl}\n\nIf you didn't request this, you can ignore this email — your password won't change.`,
     });
 

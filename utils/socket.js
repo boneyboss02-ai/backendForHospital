@@ -1,5 +1,6 @@
 const { Server } = require('socket.io');
 const jwt = require('jsonwebtoken');
+const db = require('../config/db');
 
 let io = null;
 
@@ -25,6 +26,40 @@ function init(httpServer) {
 
   io.on('connection', (socket) => {
     socket.join(`user:${socket.user.id}`);
+
+    // Ephemeral, never persisted — just relayed to the other participant
+    // while both happen to be connected. Payload: { conversation_id, is_typing }.
+    // We re-check that this socket's user is actually a participant of the
+    // conversation on every event rather than trusting the client, since
+    // otherwise anyone could fire a typing indicator into an arbitrary
+    // conversation id.
+    socket.on('chat:typing', async ({ conversation_id, is_typing }) => {
+      if (!conversation_id) return;
+      try {
+        const result = await db.query(
+          `SELECT c.doctor_id, p.user_id AS patient_user_id
+           FROM conversations c JOIN patients p ON p.id = c.patient_id
+           WHERE c.id = $1`,
+          [conversation_id]
+        );
+        const convo = result.rows[0];
+        if (!convo) return;
+
+        const isParticipant = convo.doctor_id === socket.user.id || convo.patient_user_id === socket.user.id;
+        if (!isParticipant) return;
+
+        const otherUserId = convo.doctor_id === socket.user.id ? convo.patient_user_id : convo.doctor_id;
+        if (otherUserId) {
+          emitToUser(otherUserId, 'chat:typing', {
+            conversation_id,
+            user_id: socket.user.id,
+            is_typing: !!is_typing,
+          });
+        }
+      } catch (err) {
+        console.error('chat:typing relay failed', err);
+      }
+    });
   });
 
   return io;
