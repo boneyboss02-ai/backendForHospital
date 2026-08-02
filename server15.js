@@ -7,15 +7,13 @@ const authRoutes = require('./routes/auth');
 const patientRoutes = require('./routes/patients');
 const appointmentRoutes = require('./routes/appointments');
 const inpatientRoutes = require('./routes/inpatient');
-const inventoryRoutes = require('./routes/inventory');
-const prescriptionRoutes = require('./routes/prescriptions');
+const pharmacyRoutes = require('./routes/pharmacy');
 const billingRoutes = require('./routes/billing');
 const staffRoutes = require('./routes/staff');
 const labRoutes = require('./routes/lab');
 const portalRoutes = require('./routes/portal');
 const notificationRoutes = require('./routes/notifications');
 const shiftRoutes = require('./routes/shifts');
-const reportRoutes = require('./routes/reports');
 const chatRoutes = require('./routes/chat');
 const { init: initSocket } = require('./utils/socket');
 
@@ -30,15 +28,13 @@ app.use('/api/auth', authRoutes);
 app.use('/api/patients', patientRoutes);
 app.use('/api/appointments', appointmentRoutes);
 app.use('/api/inpatient', inpatientRoutes);
-app.use('/api/inventory', inventoryRoutes);
-app.use('/api/prescriptions', prescriptionRoutes);
+app.use('/api/pharmacy', pharmacyRoutes);
 app.use('/api/billing', billingRoutes);
 app.use('/api/staff', staffRoutes);
 app.use('/api/lab', labRoutes);
 app.use('/api/portal', portalRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/shifts', shiftRoutes);
-app.use('/api/reports', reportRoutes);
 app.use('/api/chat', chatRoutes);
 
 // NOTE: uploaded lab result files are intentionally NOT served via

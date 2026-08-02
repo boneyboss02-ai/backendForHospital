@@ -239,8 +239,8 @@ router.get('/prescriptions/:id', async (req, res) => {
     if (prescription.rows.length === 0) return res.status(404).json({ error: 'Prescription not found' });
 
     const items = await db.query(
-      `SELECT pi.id, pi.dosage, pi.frequency, pi.duration_days, m.name AS medicine_name, m.unit
-       FROM prescription_items pi JOIN inventory_items m ON m.id = pi.medicine_id
+      `SELECT pi.id, pi.dosage, pi.frequency, pi.duration_days, pi.dispensed, m.name AS medicine_name, m.unit
+       FROM prescription_items pi JOIN medicines m ON m.id = pi.medicine_id
        WHERE pi.prescription_id = $1`,
       [req.params.id]
     );

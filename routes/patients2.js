@@ -46,7 +46,7 @@ router.post('/', authenticate, authorize('admin', 'receptionist'), async (req, r
 // GET /api/patients?search=name-or-code — search patients
 // Staff-only: this is the hospital-wide directory. Patients get their own
 // data through /api/portal instead, never through this list/lookup.
-router.get('/', authenticate, authorize('admin', 'receptionist', 'doctor', 'nurse'), async (req, res) => {
+router.get('/', authenticate, authorize('admin', 'receptionist', 'doctor', 'nurse', 'pharmacist'), async (req, res) => {
   const { search } = req.query;
   try {
     let result;
@@ -70,7 +70,7 @@ router.get('/', authenticate, authorize('admin', 'receptionist', 'doctor', 'nurs
 // GET /api/patients/:id — full patient profile
 // Staff-only — a patient viewing their own profile goes through
 // /api/portal/me instead, which enforces the id match server-side.
-router.get('/:id', authenticate, authorize('admin', 'receptionist', 'doctor', 'nurse'), async (req, res) => {
+router.get('/:id', authenticate, authorize('admin', 'receptionist', 'doctor', 'nurse', 'pharmacist'), async (req, res) => {
   try {
     const result = await db.query('SELECT * FROM patients WHERE id = $1', [req.params.id]);
     if (result.rows.length === 0) {
@@ -194,103 +194,6 @@ router.post('/:id/invite', authenticate, authorize('admin', 'receptionist'), asy
     res.status(500).json({ error: 'Server error creating portal account' });
   } finally {
     client.release();
-  }
-});
-
-// GET /api/patients/:id/history — full clinical history in one call: past
-// visits (with diagnosis/treatment notes), lab orders + results,
-// prescriptions, chair/room admissions, and invoices. Built for the
-// patient detail/chart view — one place to see everything about a patient
-// instead of hunting across Appointments, Lab, Prescriptions, and Billing.
-router.get('/:id/history', authenticate, authorize('admin', 'receptionist', 'doctor', 'nurse'), async (req, res) => {
-  const patientId = req.params.id;
-  try {
-    const patientResult = await db.query('SELECT * FROM patients WHERE id = $1', [patientId]);
-    if (patientResult.rows.length === 0) {
-      return res.status(404).json({ error: 'Patient not found' });
-    }
-
-    const [appointments, labOrders, prescriptions, admissions, invoices] = await Promise.all([
-      db.query(
-        `SELECT a.id, a.scheduled_at, a.status, a.reason, a.token_number,
-                u.full_name AS doctor_name, c.diagnosis, c.doctor_notes
-         FROM appointments a
-         LEFT JOIN users u ON u.id = a.doctor_id
-         LEFT JOIN consultations c ON c.appointment_id = a.id
-         WHERE a.patient_id = $1
-         ORDER BY a.scheduled_at DESC`,
-        [patientId]
-      ),
-      db.query(
-        `SELECT lo.id, lo.test_name, lo.status, lo.ordered_at,
-                u.full_name AS ordered_by_name,
-                lr.result_text, lr.result_file_url, lr.file_name, lr.entered_at
-         FROM lab_orders lo
-         LEFT JOIN users u ON u.id = lo.ordered_by
-         LEFT JOIN lab_results lr ON lr.lab_order_id = lo.id
-         WHERE lo.patient_id = $1
-         ORDER BY lo.ordered_at DESC`,
-        [patientId]
-      ),
-      db.query(
-        `SELECT p.id, p.created_at, u.full_name AS prescribed_by_name
-         FROM prescriptions p
-         JOIN users u ON u.id = p.prescribed_by
-         WHERE p.patient_id = $1
-         ORDER BY p.created_at DESC`,
-        [patientId]
-      ),
-      db.query(
-        `SELECT ad.id, ad.admitted_at, ad.discharged_at, ad.status, ad.admission_reason, ad.discharge_summary,
-                u.full_name AS doctor_name, b.bed_number AS chair_number, w.name AS room_name
-         FROM admissions ad
-         LEFT JOIN users u ON u.id = ad.attending_doctor_id
-         LEFT JOIN beds b ON b.id = ad.bed_id
-         LEFT JOIN wards w ON w.id = b.ward_id
-         WHERE ad.patient_id = $1
-         ORDER BY ad.admitted_at DESC`,
-        [patientId]
-      ),
-      db.query(
-        `SELECT id, total_amount, amount_paid, status, created_at
-         FROM invoices WHERE patient_id = $1 ORDER BY created_at DESC`,
-        [patientId]
-      ),
-    ]);
-
-    // Batch-fetch prescription items for every prescription found above,
-    // then group them back onto each prescription in JS (avoids N+1 queries).
-    const prescriptionIds = prescriptions.rows.map((p) => p.id);
-    let itemsByPrescription = {};
-    if (prescriptionIds.length > 0) {
-      const items = await db.query(
-        `SELECT pi.prescription_id, pi.dosage, pi.frequency, pi.duration_days, m.name AS medicine_name
-         FROM prescription_items pi
-         JOIN inventory_items m ON m.id = pi.medicine_id
-         WHERE pi.prescription_id = ANY($1::int[])`,
-        [prescriptionIds]
-      );
-      itemsByPrescription = items.rows.reduce((acc, item) => {
-        (acc[item.prescription_id] = acc[item.prescription_id] || []).push(item);
-        return acc;
-      }, {});
-    }
-    const prescriptionsWithItems = prescriptions.rows.map((p) => ({
-      ...p,
-      items: itemsByPrescription[p.id] || [],
-    }));
-
-    res.json({
-      patient: patientResult.rows[0],
-      appointments: appointments.rows,
-      lab_orders: labOrders.rows,
-      prescriptions: prescriptionsWithItems,
-      admissions: admissions.rows,
-      invoices: invoices.rows,
-    });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Server error fetching patient history' });
   }
 });
 

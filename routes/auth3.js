@@ -65,19 +65,12 @@ router.post('/login', async (req, res) => {
   }
 });
 
-// POST /api/auth/register-staff  (admin only — creates doctor/nurse/receptionist accounts)
+// POST /api/auth/register-staff  (admin only — creates doctor/nurse/receptionist/pharmacist accounts)
 router.post('/register-staff', authenticate, authorize('admin'), async (req, res) => {
   const { full_name, email, phone, password, role, specialty, department, consultation_fee } = req.body;
 
   if (!full_name || !email || !password || !role) {
     return res.status(400).json({ error: 'full_name, email, password, and role are required' });
-  }
-  // 'pharmacist' is still a valid value in the users.role enum (dropping enum
-  // values on a live database is unsafe — see migration_005_inventory.sql)
-  // but the role is retired: a dental clinic doesn't run its own dispensary,
-  // so no new pharmacist accounts should be created.
-  if (role === 'pharmacist') {
-    return res.status(400).json({ error: 'The pharmacist role has been retired — see Inventory instead.' });
   }
 
   const client = await db.pool.connect();
@@ -92,7 +85,7 @@ router.post('/register-staff', authenticate, authorize('admin'), async (req, res
     );
     const user = userResult.rows[0];
 
-    if (['doctor', 'nurse'].includes(role)) {
+    if (['doctor', 'nurse', 'pharmacist'].includes(role)) {
       await client.query(
         `INSERT INTO staff_profiles (user_id, specialty, department, consultation_fee)
          VALUES ($1, $2, $3, $4)`,

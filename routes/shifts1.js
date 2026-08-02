@@ -31,7 +31,7 @@ router.post('/', authenticate, authorize('admin'), async (req, res) => {
 // GET /api/shifts?date=&user_id=&ward_id= — "who's on duty" view.
 // Any staff role can view this (not patients) — knowing which nurse is on
 // duty isn't sensitive, and reception/doctors need it day-to-day too.
-router.get('/', authenticate, authorize('admin', 'doctor', 'nurse', 'receptionist'), async (req, res) => {
+router.get('/', authenticate, authorize('admin', 'doctor', 'nurse', 'receptionist', 'pharmacist'), async (req, res) => {
   const { date, user_id, ward_id } = req.query;
   const conditions = [];
   const values = [];

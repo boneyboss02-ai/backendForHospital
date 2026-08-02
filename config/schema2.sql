@@ -3,10 +3,6 @@
 -- PostgreSQL
 -- ============================================
 
--- 'pharmacist' is kept in the enum for backward compatibility with existing
--- rows/migrations, but the role is retired as of migration_005_inventory.sql:
--- no new pharmacist accounts are created (see routes/auth.js) and no route
--- uses it. A dental clinic doesn't run its own in-house dispensary.
 CREATE TYPE user_role AS ENUM ('admin', 'doctor', 'nurse', 'receptionist', 'pharmacist', 'patient');
 CREATE TYPE appointment_status AS ENUM ('scheduled', 'checked_in', 'in_progress', 'completed', 'cancelled', 'no_show');
 CREATE TYPE bed_status AS ENUM ('available', 'occupied', 'cleaning', 'maintenance');
@@ -142,17 +138,12 @@ CREATE TABLE vitals_log (
 );
 
 -- ============================================
--- INVENTORY
--- General clinic stock — medicines AND dental supplies (gloves, anesthesia,
--- filling material, etc.) together, managed by admin/nurse. There's no
--- pharmacist role or in-house dispensing; this is internal stock tracking
--- only, with no connection to billing.
+-- PHARMACY
 -- ============================================
-CREATE TABLE inventory_items (
+CREATE TABLE medicines (
     id SERIAL PRIMARY KEY,
     name VARCHAR(150) NOT NULL,
-    category VARCHAR(30) NOT NULL DEFAULT 'medicine', -- 'medicine' | 'supply'
-    unit VARCHAR(30), -- e.g. "tablet", "ml", "vial", "box"
+    unit VARCHAR(30), -- e.g. "tablet", "ml", "vial"
     stock_quantity INTEGER DEFAULT 0,
     reorder_level INTEGER DEFAULT 10,
     unit_price NUMERIC(10,2)
@@ -170,11 +161,11 @@ CREATE TABLE prescriptions (
 CREATE TABLE prescription_items (
     id SERIAL PRIMARY KEY,
     prescription_id INTEGER REFERENCES prescriptions(id) ON DELETE CASCADE,
-    medicine_id INTEGER REFERENCES inventory_items(id), -- always a category='medicine' row
+    medicine_id INTEGER REFERENCES medicines(id),
     dosage VARCHAR(100), -- e.g. "500mg"
     frequency VARCHAR(100), -- e.g. "twice daily"
     duration_days INTEGER,
-    dispensed BOOLEAN DEFAULT FALSE -- vestigial: no in-house dispense workflow anymore, always FALSE
+    dispensed BOOLEAN DEFAULT FALSE
 );
 
 -- ============================================

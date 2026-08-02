@@ -57,11 +57,8 @@ SELECT w.id, 'M' || g
 FROM wards w, generate_series(1, 4) g
 WHERE w.name = 'Maternity Ward';
 
--- Sample inventory: medicines + dental supplies together
-INSERT INTO inventory_items (name, category, unit, stock_quantity, reorder_level, unit_price) VALUES
-  ('Amoxicillin 500mg', 'medicine', 'capsule', 300, 40, 5.00),
-  ('Ibuprofen 400mg', 'medicine', 'tablet', 500, 50, 2.00),
-  ('Lidocaine 2% (dental)', 'medicine', 'vial', 100, 20, 8.50),
-  ('Nitrile gloves (box of 100)', 'supply', 'box', 40, 10, 12.00),
-  ('Composite filling material', 'supply', 'syringe', 25, 5, 22.00),
-  ('Dental anesthesia cartridges', 'supply', 'cartridge', 200, 40, 1.50);
+-- Sample medicines
+INSERT INTO medicines (name, unit, stock_quantity, reorder_level, unit_price) VALUES
+  ('Paracetamol 500mg', 'tablet', 500, 50, 2.00),
+  ('Amoxicillin 250mg', 'capsule', 300, 40, 5.00),
+  ('Normal Saline 0.9%', 'ml', 10000, 2000, 0.05);

@@ -76,7 +76,7 @@ router.post('/invoices', authenticate, authorize('admin', 'receptionist'), async
 
 // GET /api/billing/invoices?patient_id=&status=
 // Staff-only — patient_id is caller-supplied. Patients use /api/portal/invoices.
-router.get('/invoices', authenticate, authorize('admin', 'receptionist'), async (req, res) => {
+router.get('/invoices', authenticate, authorize('admin', 'receptionist', 'pharmacist'), async (req, res) => {
   const { patient_id, status } = req.query;
   const conditions = [];
   const values = [];
@@ -104,7 +104,7 @@ router.get('/invoices', authenticate, authorize('admin', 'receptionist'), async 
 // GET /api/billing/invoices/:id — full detail with line items and payments
 // Staff-only — patients use /api/portal/invoices/:id, which checks
 // ownership server-side rather than trusting the id in the URL.
-router.get('/invoices/:id', authenticate, authorize('admin', 'receptionist'), async (req, res) => {
+router.get('/invoices/:id', authenticate, authorize('admin', 'receptionist', 'pharmacist'), async (req, res) => {
   try {
     const invoice = await db.query(
       `SELECT i.*, p.full_name AS patient_name, p.patient_code
@@ -125,7 +125,7 @@ router.get('/invoices/:id', authenticate, authorize('admin', 'receptionist'), as
 });
 
 // POST /api/billing/invoices/:id/items — add a line item to an existing invoice
-router.post('/invoices/:id/items', authenticate, authorize('admin', 'receptionist'), async (req, res) => {
+router.post('/invoices/:id/items', authenticate, authorize('admin', 'receptionist', 'pharmacist'), async (req, res) => {
   const { description, quantity, unit_price } = req.body;
   if (!description || !unit_price) {
     return res.status(400).json({ error: 'description and unit_price are required' });
