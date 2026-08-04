@@ -194,16 +194,9 @@ router.patch('/:id/status', authenticate, authorize('admin', 'receptionist', 'do
 });
 
 // POST /api/appointments/:id/consultation — doctor adds diagnosis/notes, marks
-// the visit complete, bills the consultation fee (if the doctor has one set),
-// bills any procedure charges the doctor enters (e.g. "Tooth extraction —
-// 1500"), and decrements inventory for anything used during the visit (e.g.
-// "2x Aspirin"). Charges and inventory use are two separate things: charges
-// go on the patient's invoice, inventory use does not (it's just stock
-// tracking) — this clinic doesn't bill patients for consumables directly,
-// per the earlier inventory-removal decision.
-// body: { diagnosis, doctor_notes, charges?: [{description, amount}], items_used?: [{item_id, quantity}] }
+// the visit complete, and bills the consultation fee (if the doctor has one set)
 router.post('/:id/consultation', authenticate, authorize('doctor'), async (req, res) => {
-  const { diagnosis, doctor_notes, charges, items_used } = req.body;
+  const { diagnosis, doctor_notes } = req.body;
 
   const client = await db.pool.connect();
   try {
@@ -225,26 +218,6 @@ router.post('/:id/consultation', authenticate, authorize('doctor'), async (req, 
     }
     const appointment = appointmentResult.rows[0];
 
-    // Find-or-create the invoice for this visit — shared by the consultation
-    // fee (below) and any procedure charges, so everything from one visit
-    // lands on one invoice instead of several.
-    async function findOrCreateInvoice() {
-      const existing = await client.query(
-        `SELECT * FROM invoices
-         WHERE patient_id = $1 AND appointment_id = $2 AND status != 'paid'
-         ORDER BY created_at DESC LIMIT 1`,
-        [appointment.patient_id, appointment.id]
-      );
-      if (existing.rows.length > 0) return existing.rows[0];
-      const created = await client.query(
-        `INSERT INTO invoices (patient_id, appointment_id) VALUES ($1,$2) RETURNING *`,
-        [appointment.patient_id, appointment.id]
-      );
-      return created.rows[0];
-    }
-
-    let invoice_id = null;
-
     // Bill the consultation fee, if the doctor's profile has one set.
     const feeResult = await client.query(
       `SELECT sp.consultation_fee, u.full_name AS doctor_name
@@ -252,10 +225,29 @@ router.post('/:id/consultation', authenticate, authorize('doctor'), async (req, 
        WHERE sp.user_id = $1`,
       [appointment.doctor_id]
     );
+    let invoice_id = null;
 
     if (feeResult.rows.length > 0 && feeResult.rows[0].consultation_fee > 0) {
       const { consultation_fee, doctor_name } = feeResult.rows[0];
-      const invoice = await findOrCreateInvoice();
+
+      let invoiceResult = await client.query(
+        `SELECT * FROM invoices
+         WHERE patient_id = $1 AND appointment_id = $2 AND status = 'unpaid'
+         ORDER BY created_at DESC LIMIT 1`,
+        [appointment.patient_id, appointment.id]
+      );
+
+      let invoice;
+      if (invoiceResult.rows.length > 0) {
+        invoice = invoiceResult.rows[0];
+      } else {
+        const newInvoice = await client.query(
+          `INSERT INTO invoices (patient_id, appointment_id) VALUES ($1,$2) RETURNING *`,
+          [appointment.patient_id, appointment.id]
+        );
+        invoice = newInvoice.rows[0];
+      }
+
       await client.query(
         `INSERT INTO invoice_items (invoice_id, description, quantity, unit_price, line_total)
          VALUES ($1,$2,1,$3,$3)`,
@@ -268,70 +260,8 @@ router.post('/:id/consultation', authenticate, authorize('doctor'), async (req, 
       invoice_id = invoice.id;
     }
 
-    // Bill any procedures the doctor enters — e.g. "Tooth extraction — 1500".
-    // This is manual/case-by-case, unlike the fixed consultation_fee above.
-    if (Array.isArray(charges) && charges.length > 0) {
-      const invoice = await findOrCreateInvoice();
-      invoice_id = invoice.id;
-      for (const charge of charges) {
-        const { description, amount } = charge;
-        if (!description || !amount || amount <= 0) continue;
-        await client.query(
-          `INSERT INTO invoice_items (invoice_id, description, quantity, unit_price, line_total)
-           VALUES ($1,$2,1,$3,$3)`,
-          [invoice.id, description, amount]
-        );
-        await client.query(
-          `UPDATE invoices SET total_amount = total_amount + $1 WHERE id = $2`,
-          [amount, invoice.id]
-        );
-      }
-    }
-
-    if (invoice_id) {
-      const finalInvoice = await client.query('SELECT * FROM invoices WHERE id = $1', [invoice_id]);
-      const { total_amount, amount_paid } = finalInvoice.rows[0];
-      let status = 'unpaid';
-      if (Number(amount_paid) >= Number(total_amount) && Number(total_amount) > 0) status = 'paid';
-      else if (Number(amount_paid) > 0) status = 'partially_paid';
-      await client.query('UPDATE invoices SET status = $1 WHERE id = $2', [status, invoice_id]);
-    }
-
-    // Decrement inventory for anything used during the visit. This is
-    // purely internal stock tracking — not billed, per the earlier decision
-    // that a dental clinic doesn't charge patients for consumables
-    // directly. Doctors can only consume through this path; they can't add
-    // stock or restock (that stays admin/nurse in routes/inventory.js).
-    const usageLog = [];
-    if (Array.isArray(items_used) && items_used.length > 0) {
-      for (const usage of items_used) {
-        const { item_id, quantity } = usage;
-        if (!item_id || !quantity || quantity <= 0) continue;
-
-        const updated = await client.query(
-          `UPDATE inventory_items SET stock_quantity = stock_quantity - $1 WHERE id = $2 RETURNING *`,
-          [quantity, item_id]
-        );
-        if (updated.rows.length === 0) {
-          await client.query('ROLLBACK');
-          return res.status(404).json({ error: `Inventory item ${item_id} not found` });
-        }
-        if (updated.rows[0].stock_quantity < 0) {
-          await client.query('ROLLBACK');
-          return res.status(409).json({ error: `Not enough stock of "${updated.rows[0].name}" for this quantity` });
-        }
-
-        const logged = await client.query(
-          `INSERT INTO inventory_usage (appointment_id, item_id, quantity, used_by)
-           VALUES ($1,$2,$3,$4) RETURNING *`,
-          [appointment.id, item_id, quantity, req.user.id]
-        );
-        usageLog.push(logged.rows[0]);
-      }
-    }
-
     await client.query('COMMIT');
-    res.status(201).json({ consultation: consultation.rows[0], invoice_id, items_used: usageLog });
+    res.status(201).json({ consultation: consultation.rows[0], invoice_id });
   } catch (err) {
     await client.query('ROLLBACK');
     console.error(err);

@@ -210,7 +210,7 @@ router.get('/:id/history', authenticate, authorize('admin', 'receptionist', 'doc
       return res.status(404).json({ error: 'Patient not found' });
     }
 
-    const [appointments, labOrders, prescriptions, admissions, invoices, inventoryUsage] = await Promise.all([
+    const [appointments, labOrders, prescriptions, admissions, invoices] = await Promise.all([
       db.query(
         `SELECT a.id, a.scheduled_at, a.status, a.reason, a.token_number,
                 u.full_name AS doctor_name, c.diagnosis, c.doctor_notes
@@ -256,14 +256,6 @@ router.get('/:id/history', authenticate, authorize('admin', 'receptionist', 'doc
          FROM invoices WHERE patient_id = $1 ORDER BY created_at DESC`,
         [patientId]
       ),
-      db.query(
-        `SELECT iu.appointment_id, iu.quantity, iu.used_at, i.name AS item_name
-         FROM inventory_usage iu
-         JOIN inventory_items i ON i.id = iu.item_id
-         JOIN appointments a ON a.id = iu.appointment_id
-         WHERE a.patient_id = $1`,
-        [patientId]
-      ),
     ]);
 
     // Batch-fetch prescription items for every prescription found above,
@@ -288,18 +280,9 @@ router.get('/:id/history', authenticate, authorize('admin', 'receptionist', 'doc
       items: itemsByPrescription[p.id] || [],
     }));
 
-    const usageByAppointment = inventoryUsage.rows.reduce((acc, u) => {
-      (acc[u.appointment_id] = acc[u.appointment_id] || []).push({ item_name: u.item_name, quantity: u.quantity });
-      return acc;
-    }, {});
-    const appointmentsWithUsage = appointments.rows.map((a) => ({
-      ...a,
-      items_used: usageByAppointment[a.id] || [],
-    }));
-
     res.json({
       patient: patientResult.rows[0],
-      appointments: appointmentsWithUsage,
+      appointments: appointments.rows,
       lab_orders: labOrders.rows,
       prescriptions: prescriptionsWithItems,
       admissions: admissions.rows,
