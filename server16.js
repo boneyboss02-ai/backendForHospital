@@ -16,7 +16,6 @@ const portalRoutes = require('./routes/portal');
 const notificationRoutes = require('./routes/notifications');
 const shiftRoutes = require('./routes/shifts');
 const reportRoutes = require('./routes/reports');
-const expenseRoutes = require('./routes/expenses');
 const chatRoutes = require('./routes/chat');
 const { init: initSocket } = require('./utils/socket');
 
@@ -40,7 +39,6 @@ app.use('/api/portal', portalRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/shifts', shiftRoutes);
 app.use('/api/reports', reportRoutes);
-app.use('/api/expenses', expenseRoutes);
 app.use('/api/chat', chatRoutes);
 
 // NOTE: uploaded lab result files are intentionally NOT served via

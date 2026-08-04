@@ -246,23 +246,6 @@ CREATE TABLE payments (
     paid_at TIMESTAMP DEFAULT NOW()
 );
 
--- Money going OUT of the clinic — staff salaries, rent, utilities, security,
--- supplies bought outside the inventory flow, etc. Separate from
--- invoices/payments (money coming IN from patients). staff_id is optional:
--- only set for salaries paid to someone with a system account; external
--- payees (security guards, landlords, etc.) are just identified by
--- description instead.
-CREATE TABLE expenses (
-    id SERIAL PRIMARY KEY,
-    category VARCHAR(30) NOT NULL, -- 'salary' | 'rent' | 'utilities' | 'security' | 'supplies' | 'other'
-    description VARCHAR(255) NOT NULL,
-    amount NUMERIC(12,2) NOT NULL,
-    staff_id INTEGER REFERENCES users(id),
-    recorded_by INTEGER REFERENCES users(id),
-    expense_date DATE NOT NULL DEFAULT CURRENT_DATE,
-    created_at TIMESTAMP DEFAULT NOW()
-);
-
 -- ============================================
 -- NOTIFICATIONS (in-app only)
 -- ============================================

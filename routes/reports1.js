@@ -19,16 +19,11 @@ function dateRange(req) {
 }
 
 // GET /api/reports/overview?from=YYYY-MM-DD&to=YYYY-MM-DD (defaults to last 30 days)
-// Revenue/appointment/utilization figures are visible to admin and
-// receptionist (same access as Billing). Expenses and profit are
-// admin-only — what the clinic pays staff isn't receptionist's business —
-// so those fields are simply omitted from the response for anyone else.
 router.get('/overview', authenticate, authorize('admin', 'receptionist'), async (req, res) => {
   const { from, to } = dateRange(req);
-  const isAdmin = req.user.role === 'admin';
 
   try {
-    const [revenue, invoicesIssued, newPatients, apptsByStatus, apptsByDoctor, revenueByDay, lowStock, chairUtilization, expensesTotal, expensesByCategory] = await Promise.all([
+    const [revenue, invoicesIssued, newPatients, apptsByStatus, apptsByDoctor, revenueByDay, lowStock, chairUtilization] = await Promise.all([
       db.query(`SELECT COALESCE(SUM(amount), 0) AS total FROM payments WHERE paid_at BETWEEN $1 AND $2`, [from, to]),
       db.query(`SELECT COUNT(*) AS count, COALESCE(SUM(total_amount), 0) AS total FROM invoices WHERE created_at BETWEEN $1 AND $2`, [from, to]),
       db.query(`SELECT COUNT(*) AS count FROM patients WHERE created_at BETWEEN $1 AND $2`, [from, to]),
@@ -55,25 +50,11 @@ router.get('/overview', authenticate, authorize('admin', 'receptionist'), async 
          FROM beds b JOIN wards w ON w.id = b.ward_id
          GROUP BY w.name ORDER BY w.name`
       ),
-      isAdmin
-        ? db.query(`SELECT COALESCE(SUM(amount), 0) AS total FROM expenses WHERE expense_date BETWEEN $1 AND $2`, [from, to])
-        : Promise.resolve({ rows: [{ total: 0 }] }),
-      isAdmin
-        ? db.query(
-            `SELECT category, COALESCE(SUM(amount), 0) AS total
-             FROM expenses WHERE expense_date BETWEEN $1 AND $2
-             GROUP BY category ORDER BY total DESC`,
-            [from, to]
-          )
-        : Promise.resolve({ rows: [] }),
     ]);
-
-    const revenueTotal = Number(revenue.rows[0].total);
-    const expensesTotalNum = Number(expensesTotal.rows[0].total);
 
     res.json({
       range: { from, to },
-      revenue: revenueTotal,
+      revenue: Number(revenue.rows[0].total),
       invoices_issued: { count: Number(invoicesIssued.rows[0].count), total: Number(invoicesIssued.rows[0].total) },
       new_patients: Number(newPatients.rows[0].count),
       appointments_by_status: apptsByStatus.rows.map((r) => ({ status: r.status, count: Number(r.count) })),
@@ -83,11 +64,6 @@ router.get('/overview', authenticate, authorize('admin', 'receptionist'), async 
       chair_utilization: chairUtilization.rows.map((r) => ({
         room_name: r.room_name, occupied: Number(r.occupied), total: Number(r.total),
       })),
-      ...(isAdmin ? {
-        expenses: expensesTotalNum,
-        expenses_by_category: expensesByCategory.rows.map((r) => ({ category: r.category, total: Number(r.total) })),
-        profit: revenueTotal - expensesTotalNum,
-      } : {}),
     });
   } catch (err) {
     console.error(err);
