@@ -68,9 +68,9 @@ router.post('/', authenticate, authorize('admin', 'receptionist'), async (req, r
     const token_number = tokenResult.rows[0].next_token;
 
     const result = await client.query(
-      `INSERT INTO appointments (patient_id, doctor_id, scheduled_at, token_number, reason, created_by)
-       VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
-      [patient_id, doctor_id, scheduled_at, token_number, reason, req.user.id]
+      `INSERT INTO appointments (patient_id, doctor_id, scheduled_at, token_number, reason)
+       VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+      [patient_id, doctor_id, scheduled_at, token_number, reason]
     );
     const appointment = result.rows[0];
 
@@ -118,15 +118,7 @@ router.post('/', authenticate, authorize('admin', 'receptionist'), async (req, r
 // Staff-only: patient_id is caller-supplied, so this must never be reachable
 // by a patient login. Patients get their own appointments via /api/portal.
 router.get('/', authenticate, authorize('admin', 'receptionist', 'doctor', 'nurse'), async (req, res) => {
-  const { patient_id, date, status } = req.query;
-  let { doctor_id } = req.query;
-  // A doctor can only ever see their own appointments — regardless of what
-  // doctor_id they pass (or don't). This is enforced here, not just hidden
-  // in the UI, since the UI alone wouldn't stop a crafted request.
-  if (req.user.role === 'doctor') {
-    doctor_id = req.user.id;
-  }
-
+  const { doctor_id, patient_id, date, status } = req.query;
   const conditions = [];
   const values = [];
   let i = 1;
@@ -164,19 +156,6 @@ router.patch('/:id/status', authenticate, authorize('admin', 'receptionist', 'do
   }
 
   try {
-    // Receptionists can see every appointment, but can only cancel the
-    // ones they personally booked — a colleague's booking is off-limits.
-    // Other roles (admin/doctor/nurse) aren't restricted by this check.
-    if (status === 'cancelled' && req.user.role === 'receptionist') {
-      const owner = await db.query('SELECT created_by FROM appointments WHERE id = $1', [req.params.id]);
-      if (owner.rows.length === 0) {
-        return res.status(404).json({ error: 'Appointment not found' });
-      }
-      if (owner.rows[0].created_by !== req.user.id) {
-        return res.status(403).json({ error: 'You can only cancel appointments you booked yourself.' });
-      }
-    }
-
     const result = await db.query(
       'UPDATE appointments SET status = $1 WHERE id = $2 RETURNING *',
       [status, req.params.id]
@@ -322,7 +301,7 @@ router.post('/:id/consultation', authenticate, authorize('doctor'), async (req, 
     // purely internal stock tracking — not billed, per the earlier decision
     // that a dental clinic doesn't charge patients for consumables
     // directly. Doctors can only consume through this path; they can't add
-    // stock or restock (that's admin-only, in routes/inventory.js).
+    // stock or restock (that stays admin/nurse in routes/inventory.js).
     const usageLog = [];
     if (Array.isArray(items_used) && items_used.length > 0) {
       for (const usage of items_used) {

@@ -38,7 +38,7 @@ router.get('/beds', authenticate, async (req, res) => {
 // used to free an 'occupied' bed directly — that only happens through
 // discharge, so the bed and the admission record can't get out of sync
 // (e.g. marking a bed "available" while a patient is still actually in it).
-router.patch('/beds/:id/status', authenticate, authorize('admin', 'nurse', 'receptionist'), async (req, res) => {
+router.patch('/beds/:id/status', authenticate, authorize('admin', 'nurse'), async (req, res) => {
   const { status } = req.body;
   const allowed = ['available', 'cleaning', 'maintenance'];
   if (!allowed.includes(status)) {
@@ -110,14 +110,9 @@ router.post('/beds', authenticate, authorize('admin'), async (req, res) => {
 });
 
 // ---------- ADMISSIONS ----------
-// Despite the medical-sounding name (kept for now to avoid a bigger schema
-// rename), for this clinic these are really just "which chair is this
-// patient sitting in while they wait" — not a real hospital admission. So
-// receptionist can seat/free a chair same as admin/nurse, since reception
-// is who's actually managing the waiting area day to day.
 
 // POST /api/inpatient/admissions — admit a patient to a bed
-router.post('/admissions', authenticate, authorize('admin', 'doctor', 'nurse', 'receptionist'), async (req, res) => {
+router.post('/admissions', authenticate, authorize('admin', 'doctor', 'nurse'), async (req, res) => {
   const { patient_id, bed_id, attending_doctor_id, admission_reason } = req.body;
   if (!patient_id || !bed_id) {
     return res.status(400).json({ error: 'patient_id and bed_id are required' });
@@ -157,7 +152,7 @@ router.post('/admissions', authenticate, authorize('admin', 'doctor', 'nurse', '
 });
 
 // PATCH /api/inpatient/admissions/:id/discharge — discharge a patient, free the bed
-router.patch('/admissions/:id/discharge', authenticate, authorize('admin', 'doctor', 'receptionist'), async (req, res) => {
+router.patch('/admissions/:id/discharge', authenticate, authorize('admin', 'doctor'), async (req, res) => {
   const { discharge_summary } = req.body;
 
   const client = await db.pool.connect();

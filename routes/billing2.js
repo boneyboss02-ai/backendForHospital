@@ -26,7 +26,7 @@ async function recalculateInvoiceStatus(client, invoiceId) {
 // POST /api/billing/invoices — create an invoice, optionally with initial line items
 // body: { patient_id, appointment_id?, admission_id?, items?: [{description, quantity, unit_price}] }
 router.post('/invoices', authenticate, authorize('admin', 'receptionist'), async (req, res) => {
-  const { patient_id, appointment_id, admission_id, items, due_date } = req.body;
+  const { patient_id, appointment_id, admission_id, items } = req.body;
   if (!patient_id) return res.status(400).json({ error: 'patient_id is required' });
 
   const client = await db.pool.connect();
@@ -34,8 +34,8 @@ router.post('/invoices', authenticate, authorize('admin', 'receptionist'), async
     await client.query('BEGIN');
 
     const invoiceResult = await client.query(
-      `INSERT INTO invoices (patient_id, appointment_id, admission_id, due_date) VALUES ($1,$2,$3,$4) RETURNING *`,
-      [patient_id, appointment_id || null, admission_id || null, due_date || null]
+      `INSERT INTO invoices (patient_id, appointment_id, admission_id) VALUES ($1,$2,$3) RETURNING *`,
+      [patient_id, appointment_id || null, admission_id || null]
     );
     let invoice = invoiceResult.rows[0];
 
@@ -74,50 +74,20 @@ router.post('/invoices', authenticate, authorize('admin', 'receptionist'), async
   }
 });
 
-// PATCH /api/billing/invoices/:id/due-date — set or clear a payment deadline.
-// Separate from invoice creation since reception often decides this after
-// the fact (e.g. "give them until Friday" once they know the patient can't
-// pay today).
-router.patch('/invoices/:id/due-date', authenticate, authorize('admin', 'receptionist'), async (req, res) => {
-  const { due_date } = req.body;
-  try {
-    const result = await db.query(
-      'UPDATE invoices SET due_date = $1 WHERE id = $2 RETURNING *',
-      [due_date || null, req.params.id]
-    );
-    if (result.rows.length === 0) return res.status(404).json({ error: 'Invoice not found' });
-    res.json({ invoice: result.rows[0] });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Server error updating due date' });
-  }
-});
-
-// GET /api/billing/invoices?patient_id=&status=&from=&to=&overdue=true
+// GET /api/billing/invoices?patient_id=&status=
 // Staff-only — patient_id is caller-supplied. Patients use /api/portal/invoices.
-// `from`/`to` filter by invoice creation date (YYYY-MM-DD, inclusive) — this
-// is what powers "by day" filtering on the Billing page. `overdue=true`
-// means "has a due_date in the past and still isn't fully paid" — it's a
-// filter, not a separate list, so it composes with the others (e.g.
-// overdue=true&patient_id=12).
 router.get('/invoices', authenticate, authorize('admin', 'receptionist'), async (req, res) => {
-  const { patient_id, status, from, to, overdue } = req.query;
+  const { patient_id, status } = req.query;
   const conditions = [];
   const values = [];
   let i = 1;
   if (patient_id) { conditions.push(`i.patient_id = $${i++}`); values.push(patient_id); }
   if (status) { conditions.push(`i.status = $${i++}`); values.push(status); }
-  if (from) { conditions.push(`i.created_at::date >= $${i++}::date`); values.push(from); }
-  if (to) { conditions.push(`i.created_at::date <= $${i++}::date`); values.push(to); }
-  if (overdue === 'true') {
-    conditions.push(`i.due_date IS NOT NULL AND i.due_date < CURRENT_DATE AND i.status IN ('unpaid', 'partially_paid')`);
-  }
   const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
 
   try {
     const result = await db.query(
-      `SELECT i.*, p.full_name AS patient_name, p.patient_code,
-              (i.due_date IS NOT NULL AND i.due_date < CURRENT_DATE AND i.status IN ('unpaid', 'partially_paid')) AS is_overdue
+      `SELECT i.*, p.full_name AS patient_name, p.patient_code
        FROM invoices i
        JOIN patients p ON p.id = i.patient_id
        ${where}

@@ -18,9 +18,6 @@ const shiftRoutes = require('./routes/shifts');
 const reportRoutes = require('./routes/reports');
 const expenseRoutes = require('./routes/expenses');
 const chatRoutes = require('./routes/chat');
-const treatmentRoutes = require('./routes/treatments');
-const staffChatRoutes = require('./routes/staff-chat');
-const paymentRoutes = require('./routes/payments');
 const { init: initSocket } = require('./utils/socket');
 
 const app = express();
@@ -45,9 +42,6 @@ app.use('/api/shifts', shiftRoutes);
 app.use('/api/reports', reportRoutes);
 app.use('/api/expenses', expenseRoutes);
 app.use('/api/chat', chatRoutes);
-app.use('/api/treatments', treatmentRoutes);
-app.use('/api/staff-chat', staffChatRoutes);
-app.use('/api/payments', paymentRoutes);
 
 // NOTE: uploaded lab result files are intentionally NOT served via
 // express.static — they're only ever handed out through the authenticated

@@ -75,14 +75,13 @@ router.post('/orders', authenticate, authorize('doctor', 'admin'), async (req, r
 // GET /api/lab/orders?patient_id=&status=pending
 // Staff-only — patient_id is caller-supplied. Patients view their own lab
 // results via /api/portal/lab-results instead.
-router.get('/orders', authenticate, authorize('admin', 'doctor', 'nurse'), async (req, res) => {
-  const { patient_id, status, date } = req.query;
+router.get('/orders', authenticate, authorize('admin', 'receptionist', 'doctor', 'nurse'), async (req, res) => {
+  const { patient_id, status } = req.query;
   const conditions = [];
   const values = [];
   let i = 1;
   if (patient_id) { conditions.push(`lo.patient_id = $${i++}`); values.push(patient_id); }
   if (status) { conditions.push(`lo.status = $${i++}`); values.push(status); }
-  if (date) { conditions.push(`lo.ordered_at::date = $${i++}::date`); values.push(date); }
   const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
 
   try {
@@ -105,7 +104,7 @@ router.get('/orders', authenticate, authorize('admin', 'doctor', 'nurse'), async
 // GET /api/lab/orders/:id — order detail plus any result
 // Staff-only — patients use /api/portal/lab-results/:id instead, which
 // checks ownership server-side rather than trusting the id in the URL.
-router.get('/orders/:id', authenticate, authorize('admin', 'doctor', 'nurse'), async (req, res) => {
+router.get('/orders/:id', authenticate, authorize('admin', 'receptionist', 'doctor', 'nurse'), async (req, res) => {
   try {
     const order = await db.query(
       `SELECT lo.*, p.full_name AS patient_name, p.patient_code, u.full_name AS ordered_by_name

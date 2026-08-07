@@ -1,45 +1,10 @@
 const express = require('express');
-const path = require('path');
-const fs = require('fs');
-const crypto = require('crypto');
-const multer = require('multer');
 const db = require('../config/db');
 const { authenticate, authorize } = require('../middleware/auth');
 const { isWithinWorkingHours, isTimeSlotTaken } = require('../utils/availability');
 const { createNotification } = require('../utils/notifications');
 
 const router = express.Router();
-
-// ---------- Payment proof upload config ----------
-// Same pattern as routes/lab.js: stored outside any statically-served
-// folder, only ever handed out through an authenticated route.
-const PROOF_UPLOAD_DIR = path.join(__dirname, '..', 'uploads', 'payment-proofs');
-fs.mkdirSync(PROOF_UPLOAD_DIR, { recursive: true });
-
-const PROOF_ALLOWED_MIME = { 'image/jpeg': '.jpg', 'image/png': '.png' };
-
-const proofStorage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, PROOF_UPLOAD_DIR),
-  filename: (req, file, cb) => cb(null, `${crypto.randomUUID()}${PROOF_ALLOWED_MIME[file.mimetype] || ''}`),
-});
-
-const uploadProof = multer({
-  storage: proofStorage,
-  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
-  fileFilter: (req, file, cb) => {
-    if (!PROOF_ALLOWED_MIME[file.mimetype]) {
-      return cb(new Error('Only JPG or PNG screenshots are allowed'));
-    }
-    cb(null, true);
-  },
-});
-
-function handleProofUpload(req, res, next) {
-  uploadProof.single('image')(req, res, (err) => {
-    if (err) return res.status(400).json({ error: err.message });
-    next();
-  });
-}
 
 // Every route below is patient-only, and every query is scoped to
 // req.patient.id — never to a patient_id read from the request. This is the
@@ -313,172 +278,10 @@ router.get('/invoices/:id', async (req, res) => {
 
     const items = await db.query('SELECT * FROM invoice_items WHERE invoice_id = $1', [req.params.id]);
     const payments = await db.query('SELECT * FROM payments WHERE invoice_id = $1 ORDER BY paid_at DESC', [req.params.id]);
-    const proofs = await db.query(
-      `SELECT id, transaction_ref, status, submitted_at, review_note FROM payment_proofs
-       WHERE invoice_id = $1 ORDER BY submitted_at DESC`,
-      [req.params.id]
-    );
-    res.json({ invoice: invoice.rows[0], items: items.rows, payments: payments.rows, proofs: proofs.rows });
+    res.json({ invoice: invoice.rows[0], items: items.rows, payments: payments.rows });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Server error fetching invoice' });
-  }
-});
-
-// ---------- CHAPA (test mode) ----------
-// Standard Chapa flow: we initialize a transaction and get back a hosted
-// checkout URL, the patient pays there, Chapa redirects them back to
-// return_url, and we verify server-side before ever marking anything paid
-// — we never trust the redirect alone, only the verify call's response.
-const CHAPA_BASE_URL = 'https://api.chapa.co/v1';
-
-// POST /api/portal/invoices/:id/pay/chapa/initialize
-router.post('/invoices/:id/pay/chapa/initialize', async (req, res) => {
-  if (!process.env.CHAPA_SECRET_KEY) {
-    return res.status(503).json({ error: 'Online payment is not configured yet — ask staff for the Chapa test key setup.' });
-  }
-  try {
-    const invoiceResult = await db.query(
-      `SELECT * FROM invoices WHERE id = $1 AND patient_id = $2`,
-      [req.params.id, req.patient.id]
-    );
-    if (invoiceResult.rows.length === 0) return res.status(404).json({ error: 'Invoice not found' });
-    const invoice = invoiceResult.rows[0];
-    if (invoice.status === 'paid') return res.status(400).json({ error: 'This invoice is already paid' });
-
-    const balance = Number(invoice.total_amount) - Number(invoice.amount_paid);
-    const tx_ref = `yoma-${invoice.id}-${crypto.randomUUID()}`;
-    const [first_name, ...rest] = (req.patient.full_name || 'Patient').split(' ');
-
-    const chapaRes = await fetch(`${CHAPA_BASE_URL}/transaction/initialize`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${process.env.CHAPA_SECRET_KEY}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        amount: String(balance),
-        currency: 'ETB',
-        email: req.patient.email || 'patient@yoma.clinic',
-        first_name,
-        last_name: rest.join(' ') || 'Patient',
-        tx_ref,
-        callback_url: `${process.env.FRONTEND_URL || 'http://localhost:5173'}/portal/billing`,
-        return_url: `${process.env.FRONTEND_URL || 'http://localhost:5173'}/portal/billing?chapa_tx_ref=${tx_ref}`,
-        customization: { title: 'Yoma Dental Clinic', description: `Invoice #${invoice.id}` },
-      }),
-    });
-    const chapaData = await chapaRes.json();
-
-    if (chapaData.status !== 'success') {
-      return res.status(502).json({ error: chapaData.message || 'Chapa could not start this payment' });
-    }
-
-    await db.query(
-      `INSERT INTO chapa_transactions (invoice_id, patient_id, tx_ref, amount) VALUES ($1,$2,$3,$4)`,
-      [invoice.id, req.patient.id, tx_ref, balance]
-    );
-
-    res.json({ checkout_url: chapaData.data.checkout_url, tx_ref });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Server error starting Chapa payment' });
-  }
-});
-
-// GET /api/portal/invoices/pay/chapa/verify?tx_ref=...
-// Called when the patient lands back on the app after Chapa checkout.
-router.get('/invoices/pay/chapa/verify', async (req, res) => {
-  const { tx_ref } = req.query;
-  if (!tx_ref) return res.status(400).json({ error: 'tx_ref is required' });
-  if (!process.env.CHAPA_SECRET_KEY) {
-    return res.status(503).json({ error: 'Online payment is not configured yet.' });
-  }
-
-  const client = await db.pool.connect();
-  try {
-    const txResult = await client.query(
-      `SELECT * FROM chapa_transactions WHERE tx_ref = $1 AND patient_id = $2`,
-      [tx_ref, req.patient.id]
-    );
-    if (txResult.rows.length === 0) return res.status(404).json({ error: 'Transaction not found' });
-    const tx = txResult.rows[0];
-
-    if (tx.status === 'success') {
-      return res.json({ status: 'success', already_recorded: true });
-    }
-
-    const chapaRes = await fetch(`${CHAPA_BASE_URL}/transaction/verify/${tx_ref}`, {
-      headers: { Authorization: `Bearer ${process.env.CHAPA_SECRET_KEY}` },
-    });
-    const chapaData = await chapaRes.json();
-    const success = chapaData.status === 'success' && chapaData.data?.status === 'success';
-
-    await client.query('BEGIN');
-    await client.query(
-      `UPDATE chapa_transactions SET status = $1, verified_at = NOW() WHERE id = $2`,
-      [success ? 'success' : 'failed', tx.id]
-    );
-
-    if (success) {
-      await client.query(
-        `INSERT INTO payments (invoice_id, amount, method) VALUES ($1,$2,'chapa')`,
-        [tx.invoice_id, tx.amount]
-      );
-      const invoice = await client.query('SELECT * FROM invoices WHERE id = $1', [tx.invoice_id]);
-      const { total_amount, amount_paid } = invoice.rows[0];
-      const newPaid = Number(amount_paid) + Number(tx.amount);
-      const status = newPaid >= Number(total_amount) ? 'paid' : 'partially_paid';
-      await client.query(`UPDATE invoices SET amount_paid = $1, status = $2 WHERE id = $3`, [newPaid, status, tx.invoice_id]);
-    }
-
-    await client.query('COMMIT');
-    res.json({ status: success ? 'success' : 'failed' });
-  } catch (err) {
-    await client.query('ROLLBACK');
-    console.error(err);
-    res.status(500).json({ error: 'Server error verifying payment' });
-  } finally {
-    client.release();
-  }
-});
-
-// ---------- Manual proof of payment (fallback for interrupted Chapa checkouts) ----------
-
-// POST /api/portal/invoices/:id/pay/proof — multipart: transaction_ref (text) + image (file)
-router.post('/invoices/:id/pay/proof', handleProofUpload, async (req, res) => {
-  const { transaction_ref } = req.body;
-  if (!transaction_ref || !transaction_ref.trim()) {
-    if (req.file) fs.unlink(req.file.path, () => {});
-    return res.status(400).json({ error: 'A transaction reference number is required' });
-  }
-  if (!req.file) {
-    return res.status(400).json({ error: 'A screenshot of the payment is required' });
-  }
-
-  try {
-    const invoiceResult = await db.query(
-      `SELECT * FROM invoices WHERE id = $1 AND patient_id = $2`,
-      [req.params.id, req.patient.id]
-    );
-    if (invoiceResult.rows.length === 0) {
-      fs.unlink(req.file.path, () => {});
-      return res.status(404).json({ error: 'Invoice not found' });
-    }
-
-    const result = await db.query(
-      `INSERT INTO payment_proofs (invoice_id, patient_id, transaction_ref, image_path)
-       VALUES ($1,$2,$3,$4) RETURNING *`,
-      [req.params.id, req.patient.id, transaction_ref.trim(), req.file.filename]
-    );
-    res.status(201).json({ proof: result.rows[0] });
-  } catch (err) {
-    fs.unlink(req.file.path, () => {});
-    if (err.code === '23505') { // unique_violation on transaction_ref
-      return res.status(409).json({ error: 'This transaction number has already been submitted. If this is a mistake, contact the clinic.' });
-    }
-    console.error(err);
-    res.status(500).json({ error: 'Server error submitting payment proof' });
   }
 });
 

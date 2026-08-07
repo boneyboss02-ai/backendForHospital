@@ -44,31 +44,13 @@ router.post('/', authenticate, authorize('admin', 'receptionist'), async (req, r
 });
 
 // GET /api/patients?search=name-or-code — search patients
-// Staff-only: this is the hospital-wide directory for admin/receptionist/
-// nurse. A doctor's version of this directory is narrower — only patients
-// they've actually had an appointment or admission with, same relationship
-// check used for chat contacts (see routes/chat.js). Patients get their own
+// Staff-only: this is the hospital-wide directory. Patients get their own
 // data through /api/portal instead, never through this list/lookup.
 router.get('/', authenticate, authorize('admin', 'receptionist', 'doctor', 'nurse'), async (req, res) => {
   const { search } = req.query;
-  const isDoctor = req.user.role === 'doctor';
   try {
     let result;
-    if (isDoctor) {
-      const conditions = [
-        `p.id IN (SELECT patient_id FROM appointments WHERE doctor_id = $1
-                  UNION SELECT patient_id FROM admissions WHERE attending_doctor_id = $1)`,
-      ];
-      const values = [req.user.id];
-      if (search) {
-        conditions.push(`(p.full_name ILIKE $2 OR p.patient_code ILIKE $2 OR p.phone ILIKE $2)`);
-        values.push(`%${search}%`);
-      }
-      result = await db.query(
-        `SELECT p.* FROM patients p WHERE ${conditions.join(' AND ')} ORDER BY p.created_at DESC LIMIT 50`,
-        values
-      );
-    } else if (search) {
+    if (search) {
       result = await db.query(
         `SELECT * FROM patients
          WHERE full_name ILIKE $1 OR patient_code ILIKE $1 OR phone ILIKE $1
@@ -85,25 +67,11 @@ router.get('/', authenticate, authorize('admin', 'receptionist', 'doctor', 'nurs
   }
 });
 
-// Shared by the two doctor-scoping checks below — true if this doctor has
-// ever had an appointment or admission with this patient.
-async function doctorTreatsPatient(doctorId, patientId) {
-  const result = await db.query(
-    `SELECT 1 FROM appointments WHERE doctor_id = $1 AND patient_id = $2
-     UNION SELECT 1 FROM admissions WHERE attending_doctor_id = $1 AND patient_id = $2`,
-    [doctorId, patientId]
-  );
-  return result.rows.length > 0;
-}
-
 // GET /api/patients/:id — full patient profile
 // Staff-only — a patient viewing their own profile goes through
 // /api/portal/me instead, which enforces the id match server-side.
 router.get('/:id', authenticate, authorize('admin', 'receptionist', 'doctor', 'nurse'), async (req, res) => {
   try {
-    if (req.user.role === 'doctor' && !(await doctorTreatsPatient(req.user.id, req.params.id))) {
-      return res.status(403).json({ error: 'You have no appointments or admissions with this patient' });
-    }
     const result = await db.query('SELECT * FROM patients WHERE id = $1', [req.params.id]);
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Patient not found' });
@@ -117,9 +85,6 @@ router.get('/:id', authenticate, authorize('admin', 'receptionist', 'doctor', 'n
 
 // PUT /api/patients/:id — update patient info
 router.put('/:id', authenticate, authorize('admin', 'receptionist', 'doctor', 'nurse'), async (req, res) => {
-  if (req.user.role === 'doctor' && !(await doctorTreatsPatient(req.user.id, req.params.id))) {
-    return res.status(403).json({ error: 'You have no appointments or admissions with this patient' });
-  }
   const fields = [
     'full_name', 'date_of_birth', 'gender', 'phone', 'address',
     'blood_group', 'allergies', 'chronic_conditions',
@@ -240,9 +205,6 @@ router.post('/:id/invite', authenticate, authorize('admin', 'receptionist'), asy
 router.get('/:id/history', authenticate, authorize('admin', 'receptionist', 'doctor', 'nurse'), async (req, res) => {
   const patientId = req.params.id;
   try {
-    if (req.user.role === 'doctor' && !(await doctorTreatsPatient(req.user.id, patientId))) {
-      return res.status(403).json({ error: 'You have no appointments or admissions with this patient' });
-    }
     const patientResult = await db.query('SELECT * FROM patients WHERE id = $1', [patientId]);
     if (patientResult.rows.length === 0) {
       return res.status(404).json({ error: 'Patient not found' });

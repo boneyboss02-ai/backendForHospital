@@ -60,29 +60,6 @@ function init(httpServer) {
         console.error('chat:typing relay failed', err);
       }
     });
-
-    // Same idea as chat:typing above, but for the staff_conversations
-    // table — any two staff members, no clinical-relationship check needed.
-    socket.on('staff_chat:typing', async ({ conversation_id, is_typing }) => {
-      if (!conversation_id) return;
-      try {
-        const result = await db.query('SELECT user_a_id, user_b_id FROM staff_conversations WHERE id = $1', [conversation_id]);
-        const convo = result.rows[0];
-        if (!convo) return;
-
-        const isParticipant = convo.user_a_id === socket.user.id || convo.user_b_id === socket.user.id;
-        if (!isParticipant) return;
-
-        const otherUserId = convo.user_a_id === socket.user.id ? convo.user_b_id : convo.user_a_id;
-        emitToUser(otherUserId, 'staff_chat:typing', {
-          conversation_id,
-          user_id: socket.user.id,
-          is_typing: !!is_typing,
-        });
-      } catch (err) {
-        console.error('staff_chat:typing relay failed', err);
-      }
-    });
   });
 
   return io;

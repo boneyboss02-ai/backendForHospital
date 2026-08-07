@@ -31,7 +31,7 @@ router.get('/items', authenticate, async (req, res) => {
 });
 
 // POST /api/inventory/items — add a medicine or supply to inventory (admin/nurse)
-router.post('/items', authenticate, authorize('admin'), async (req, res) => {
+router.post('/items', authenticate, authorize('admin', 'nurse'), async (req, res) => {
   const { name, category, unit, stock_quantity, reorder_level, unit_price } = req.body;
   if (!name) return res.status(400).json({ error: 'name is required' });
   if (category && !['medicine', 'supply'].includes(category)) {
@@ -52,7 +52,7 @@ router.post('/items', authenticate, authorize('admin'), async (req, res) => {
 });
 
 // PATCH /api/inventory/items/:id/stock — adjust stock (restock: positive delta, correction: negative)
-router.patch('/items/:id/stock', authenticate, authorize('admin'), async (req, res) => {
+router.patch('/items/:id/stock', authenticate, authorize('admin', 'nurse'), async (req, res) => {
   const { delta } = req.body;
   if (typeof delta !== 'number') {
     return res.status(400).json({ error: 'delta must be a number (e.g. 50 to restock, -5 to correct)' });

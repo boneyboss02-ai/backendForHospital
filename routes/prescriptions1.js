@@ -72,13 +72,12 @@ router.post('/', authenticate, authorize('doctor'), async (req, res) => {
 
 // GET /api/prescriptions?patient_id=
 // Staff-only — patient_id is caller-supplied. Patients use /api/portal/prescriptions.
-router.get('/', authenticate, authorize('admin', 'doctor', 'nurse'), async (req, res) => {
-  const { patient_id, date } = req.query;
+router.get('/', authenticate, authorize('admin', 'receptionist', 'doctor', 'nurse'), async (req, res) => {
+  const { patient_id } = req.query;
   const conditions = [];
   const values = [];
   let i = 1;
   if (patient_id) { conditions.push(`p.patient_id = $${i++}`); values.push(patient_id); }
-  if (date) { conditions.push(`p.created_at::date = $${i++}::date`); values.push(date); }
   const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
 
   try {
@@ -101,7 +100,7 @@ router.get('/', authenticate, authorize('admin', 'doctor', 'nurse'), async (req,
 // GET /api/prescriptions/:id — full detail with items
 // Staff-only — patients use /api/portal/prescriptions/:id, which checks
 // ownership server-side rather than trusting the id in the URL.
-router.get('/:id', authenticate, authorize('admin', 'doctor', 'nurse'), async (req, res) => {
+router.get('/:id', authenticate, authorize('admin', 'receptionist', 'doctor', 'nurse'), async (req, res) => {
   try {
     const prescription = await db.query(
       `SELECT p.*, pat.full_name AS patient_name, pat.patient_code, u.full_name AS prescribed_by_name
