@@ -34,12 +34,12 @@ router.get('/', authenticate, async (req, res) => {
 });
 
 // ---------- DOCTOR AVAILABILITY ----------
-// Admin-only to manage (even for a doctor managing their own hours) — a
-// deliberate choice: all scheduling, including a doctor's own working
-// hours, goes through admin. Doctors can view but not self-edit.
+// This was missing before: the booking system enforces doctor_availability,
+// but nothing could actually create rows in that table. Without this,
+// getAvailableSlots() always returns [] and no doctor is ever bookable.
 
-function canManageAvailability(req) {
-  return req.user.role === 'admin';
+function canManageAvailability(req, doctorId) {
+  return req.user.role === 'admin' || String(req.user.id) === String(doctorId);
 }
 
 // GET /api/staff/:id/availability — anyone authenticated can view (needed
@@ -61,8 +61,8 @@ router.get('/:id/availability', authenticate, async (req, res) => {
 // only set their own.
 // body: { day_of_week (0-6, Sun-Sat), start_time ("09:00"), end_time ("13:00"), slot_minutes? }
 router.post('/:id/availability', authenticate, async (req, res) => {
-  if (!canManageAvailability(req)) {
-    return res.status(403).json({ error: 'Only admin can manage doctor availability' });
+  if (!canManageAvailability(req, req.params.id)) {
+    return res.status(403).json({ error: 'You can only manage your own availability' });
   }
   const { day_of_week, start_time, end_time, slot_minutes } = req.body;
   if (day_of_week === undefined || !start_time || !end_time) {
@@ -90,8 +90,8 @@ router.post('/:id/availability', authenticate, async (req, res) => {
 
 // DELETE /api/staff/:id/availability/:availabilityId
 router.delete('/:id/availability/:availabilityId', authenticate, async (req, res) => {
-  if (!canManageAvailability(req)) {
-    return res.status(403).json({ error: 'Only admin can manage doctor availability' });
+  if (!canManageAvailability(req, req.params.id)) {
+    return res.status(403).json({ error: 'You can only manage your own availability' });
   }
   try {
     const result = await db.query(

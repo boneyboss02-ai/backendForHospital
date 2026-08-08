@@ -352,13 +352,9 @@ CREATE TABLE messages (
     id SERIAL PRIMARY KEY,
     conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
     sender_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    body TEXT, -- nullable: a message can be attachment-only (see CHECK below)
-    attachment_url VARCHAR(255),
-    attachment_type VARCHAR(20), -- 'image' | 'video' | 'audio' | 'pdf' | 'file'
-    attachment_name VARCHAR(255),
+    body TEXT NOT NULL,
     read_at TIMESTAMP,
-    created_at TIMESTAMP DEFAULT NOW(),
-    CONSTRAINT messages_body_or_attachment CHECK (body IS NOT NULL OR attachment_url IS NOT NULL)
+    created_at TIMESTAMP DEFAULT NOW()
 );
 
 -- ============================================
@@ -438,13 +434,9 @@ CREATE TABLE staff_messages (
     id SERIAL PRIMARY KEY,
     conversation_id INTEGER NOT NULL REFERENCES staff_conversations(id) ON DELETE CASCADE,
     sender_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    body TEXT,
-    attachment_url VARCHAR(255),
-    attachment_type VARCHAR(20),
-    attachment_name VARCHAR(255),
+    body TEXT NOT NULL,
     read_at TIMESTAMP,
-    created_at TIMESTAMP DEFAULT NOW(),
-    CONSTRAINT staff_messages_body_or_attachment CHECK (body IS NOT NULL OR attachment_url IS NOT NULL)
+    created_at TIMESTAMP DEFAULT NOW()
 );
 
 -- ============================================

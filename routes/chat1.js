@@ -1,11 +1,8 @@
 const express = require('express');
-const fs = require('fs');
-const path = require('path');
 const db = require('../config/db');
 const { authenticate, authorize } = require('../middleware/auth');
 const { createNotification } = require('../utils/notifications');
 const { emitToUser } = require('../utils/socket');
-const { UPLOAD_DIR, attachmentTypeFor, handleChatUpload } = require('../utils/chatUpload');
 
 const router = express.Router();
 
@@ -234,33 +231,18 @@ router.get('/conversations/:id/messages', loadOwnConversation, async (req, res) 
   }
 });
 
-// POST /api/chat/conversations/:id/messages — send a message. Accepts
-// either a plain JSON { body } (unchanged, text-only), or multipart with
-// an "attachment" file field plus an optional "body" caption — either
-// works against this same route, since multer only touches multipart
-// requests and leaves JSON ones for express.json() to have already parsed.
-router.post('/conversations/:id/messages', loadOwnConversation, handleChatUpload, async (req, res) => {
-  const body = (req.body.body || '').trim() || null;
-  const file = req.file;
-
-  if (!body && !file) {
-    if (file) fs.unlink(file.path, () => {});
-    return res.status(400).json({ error: 'A message needs text or an attachment' });
-  }
-  if (body && body.length > MAX_MESSAGE_LENGTH) {
-    if (file) fs.unlink(file.path, () => {});
+// POST /api/chat/conversations/:id/messages — send a message.
+router.post('/conversations/:id/messages', loadOwnConversation, async (req, res) => {
+  const body = (req.body.body || '').trim();
+  if (!body) return res.status(400).json({ error: 'Message body is required' });
+  if (body.length > MAX_MESSAGE_LENGTH) {
     return res.status(400).json({ error: `Message is too long (max ${MAX_MESSAGE_LENGTH} characters)` });
   }
 
   try {
-    const attachment_url = file ? file.filename : null;
-    const attachment_type = file ? attachmentTypeFor(file.mimetype) : null;
-    const attachment_name = file ? file.originalname : null;
-
     const result = await db.query(
-      `INSERT INTO messages (conversation_id, sender_id, body, attachment_url, attachment_type, attachment_name)
-       VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
-      [req.conversation.id, req.user.id, body, attachment_url, attachment_type, attachment_name]
+      `INSERT INTO messages (conversation_id, sender_id, body) VALUES ($1, $2, $3) RETURNING *`,
+      [req.conversation.id, req.user.id, body]
     );
     const message = { ...result.rows[0], sender_name: req.user.full_name };
 
@@ -285,7 +267,7 @@ router.post('/conversations/:id/messages', loadOwnConversation, handleChatUpload
         user_id: recipientUserId,
         type: 'chat_message',
         title: `New message from ${req.user.full_name}`,
-        message: body ? (body.length > 120 ? `${body.slice(0, 117)}...` : body) : `Sent ${attachment_type === 'audio' ? 'a voice note' : `an ${attachment_type}`}`,
+        message: body.length > 120 ? `${body.slice(0, 117)}...` : body,
         related_type: 'conversation',
         related_id: req.conversation.id,
       });
@@ -293,21 +275,9 @@ router.post('/conversations/:id/messages', loadOwnConversation, handleChatUpload
 
     res.status(201).json({ message });
   } catch (err) {
-    if (file) fs.unlink(file.path, () => {});
     console.error(err);
     res.status(500).json({ error: 'Server error sending message' });
   }
-});
-
-// GET /api/chat/conversations/:id/attachments/:filename — authenticated,
-// only a participant of the conversation can fetch it. Same never-served-
-// as-a-static-file pattern as lab results and payment proofs.
-router.get('/conversations/:id/attachments/:filename', loadOwnConversation, async (req, res) => {
-  const filePath = path.join(UPLOAD_DIR, req.params.filename);
-  if (!filePath.startsWith(UPLOAD_DIR) || !fs.existsSync(filePath)) {
-    return res.status(404).json({ error: 'File not found' });
-  }
-  res.sendFile(filePath);
 });
 
 module.exports = router;

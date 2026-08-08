@@ -1,11 +1,8 @@
 const express = require('express');
-const fs = require('fs');
-const path = require('path');
 const db = require('../config/db');
 const { authenticate, authorize } = require('../middleware/auth');
 const { createNotification } = require('../utils/notifications');
 const { emitToUser } = require('../utils/socket');
-const { UPLOAD_DIR, attachmentTypeFor, handleChatUpload } = require('../utils/chatUpload');
 
 const router = express.Router();
 
@@ -48,7 +45,7 @@ async function loadOwnConversation(req, res, next) {
 router.get('/contacts', async (req, res) => {
   try {
     const result = await db.query(
-      `SELECT id, full_name, role FROM users WHERE role = ANY($1::text[]) AND id != $2 ORDER BY full_name`,
+      `SELECT id, full_name, role FROM users WHERE role::text = ANY($1::text[]) AND id != $2 ORDER BY full_name`,
       [STAFF_ROLES, req.user.id]
     );
     res.json({ contacts: result.rows });
@@ -96,7 +93,7 @@ router.post('/conversations', async (req, res) => {
   if (Number(other_user_id) === req.user.id) return res.status(400).json({ error: "You can't message yourself" });
 
   try {
-    const otherUser = await db.query('SELECT id FROM users WHERE id = $1 AND role = ANY($2::text[])', [other_user_id, STAFF_ROLES]);
+    const otherUser = await db.query('SELECT id FROM users WHERE id = $1 AND role::text = ANY($2::text[])', [other_user_id, STAFF_ROLES]);
     if (otherUser.rows.length === 0) return res.status(404).json({ error: 'Staff member not found' });
 
     const [userA, userB] = orderPair(req.user.id, Number(other_user_id));
@@ -153,28 +150,17 @@ router.get('/conversations/:id/messages', loadOwnConversation, async (req, res) 
 });
 
 // POST /api/staff-chat/conversations/:id/messages
-router.post('/conversations/:id/messages', loadOwnConversation, handleChatUpload, async (req, res) => {
-  const body = (req.body.body || '').trim() || null;
-  const file = req.file;
-
-  if (!body && !file) {
-    if (file) fs.unlink(file.path, () => {});
-    return res.status(400).json({ error: 'A message needs text or an attachment' });
-  }
-  if (body && body.length > MAX_MESSAGE_LENGTH) {
-    if (file) fs.unlink(file.path, () => {});
+router.post('/conversations/:id/messages', loadOwnConversation, async (req, res) => {
+  const body = (req.body.body || '').trim();
+  if (!body) return res.status(400).json({ error: 'Message body is required' });
+  if (body.length > MAX_MESSAGE_LENGTH) {
     return res.status(400).json({ error: `Message is too long (max ${MAX_MESSAGE_LENGTH} characters)` });
   }
 
   try {
-    const attachment_url = file ? file.filename : null;
-    const attachment_type = file ? attachmentTypeFor(file.mimetype) : null;
-    const attachment_name = file ? file.originalname : null;
-
     const result = await db.query(
-      `INSERT INTO staff_messages (conversation_id, sender_id, body, attachment_url, attachment_type, attachment_name)
-       VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
-      [req.conversation.id, req.user.id, body, attachment_url, attachment_type, attachment_name]
+      `INSERT INTO staff_messages (conversation_id, sender_id, body) VALUES ($1,$2,$3) RETURNING *`,
+      [req.conversation.id, req.user.id, body]
     );
     const message = { ...result.rows[0], sender_name: req.user.full_name };
 
@@ -186,26 +172,16 @@ router.post('/conversations/:id/messages', loadOwnConversation, handleChatUpload
       user_id: recipientId,
       type: 'staff_chat_message',
       title: `New message from ${req.user.full_name}`,
-      message: body ? (body.length > 120 ? `${body.slice(0, 117)}...` : body) : `Sent ${attachment_type === 'audio' ? 'a voice note' : `an ${attachment_type}`}`,
+      message: body.length > 120 ? `${body.slice(0, 117)}...` : body,
       related_type: 'staff_conversation',
       related_id: req.conversation.id,
     });
 
     res.status(201).json({ message });
   } catch (err) {
-    if (file) fs.unlink(file.path, () => {});
     console.error(err);
     res.status(500).json({ error: 'Server error sending message' });
   }
-});
-
-// GET /api/staff-chat/conversations/:id/attachments/:filename
-router.get('/conversations/:id/attachments/:filename', loadOwnConversation, async (req, res) => {
-  const filePath = path.join(UPLOAD_DIR, req.params.filename);
-  if (!filePath.startsWith(UPLOAD_DIR) || !fs.existsSync(filePath)) {
-    return res.status(404).json({ error: 'File not found' });
-  }
-  res.sendFile(filePath);
 });
 
 module.exports = router;
