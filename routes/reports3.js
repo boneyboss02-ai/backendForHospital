@@ -28,7 +28,7 @@ router.get('/overview', authenticate, authorize('admin', 'receptionist'), async 
   const isAdmin = req.user.role === 'admin';
 
   try {
-    const [revenue, invoicesIssued, newPatients, apptsByStatus, apptsByDoctor, revenueByDay, lowStock, chairUtilization, expensesTotal, expensesByCategory, suppliesCost] = await Promise.all([
+    const [revenue, invoicesIssued, newPatients, apptsByStatus, apptsByDoctor, revenueByDay, lowStock, chairUtilization, expensesTotal, expensesByCategory] = await Promise.all([
       db.query(`SELECT COALESCE(SUM(amount), 0) AS total FROM payments WHERE paid_at BETWEEN $1 AND $2`, [from, to]),
       db.query(`SELECT COUNT(*) AS count, COALESCE(SUM(total_amount), 0) AS total FROM invoices WHERE created_at BETWEEN $1 AND $2`, [from, to]),
       db.query(`SELECT COUNT(*) AS count FROM patients WHERE created_at BETWEEN $1 AND $2`, [from, to]),
@@ -66,25 +66,10 @@ router.get('/overview', authenticate, authorize('admin', 'receptionist'), async 
             [from, to]
           )
         : Promise.resolve({ rows: [] }),
-      isAdmin
-        ? db.query(
-            `SELECT COALESCE(SUM(iu.quantity * i.unit_price), 0) AS total
-             FROM inventory_usage iu JOIN inventory_items i ON i.id = iu.item_id
-             WHERE iu.used_at BETWEEN $1 AND $2`,
-            [from, to]
-          )
-        : Promise.resolve({ rows: [{ total: 0 }] }),
     ]);
 
     const revenueTotal = Number(revenue.rows[0].total);
     const expensesTotalNum = Number(expensesTotal.rows[0].total);
-    // What medicine/supplies were actually consumed cost, valued at
-    // today's unit_price (inventory_usage doesn't snapshot the price at
-    // the moment it was used, so — like the profitability report below —
-    // this is an approximation if prices have changed since). This is the
-    // piece that was missing from `profit` before: it only ever subtracted
-    // expenses, never what treatments actually cost in supplies.
-    const suppliesCostNum = Number(suppliesCost.rows[0].total);
 
     res.json({
       range: { from, to },
@@ -101,12 +86,7 @@ router.get('/overview', authenticate, authorize('admin', 'receptionist'), async 
       ...(isAdmin ? {
         expenses: expensesTotalNum,
         expenses_by_category: expensesByCategory.rows.map((r) => ({ category: r.category, total: Number(r.total) })),
-        cost_of_supplies: suppliesCostNum,
-        // Staff wages aren't tracked as their own thing anywhere in this
-        // app — there's no payroll table. If you want them counted here,
-        // log them as an Expense (any category works, e.g. "payroll") and
-        // they'll already be included in `expenses` and this profit figure.
-        profit: revenueTotal - expensesTotalNum - suppliesCostNum,
+        profit: revenueTotal - expensesTotalNum,
       } : {}),
     });
   } catch (err) {
