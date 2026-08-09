@@ -48,7 +48,7 @@ async function loadOwnConversation(req, res, next) {
 router.get('/contacts', async (req, res) => {
   try {
     const result = await db.query(
-      `SELECT id, full_name, role FROM users WHERE role::text = ANY($1::text[]) AND id != $2 ORDER BY full_name`,
+      `SELECT id, full_name, role FROM users WHERE role = ANY($1::text[]) AND id != $2 ORDER BY full_name`,
       [STAFF_ROLES, req.user.id]
     );
     res.json({ contacts: result.rows });
@@ -96,7 +96,7 @@ router.post('/conversations', async (req, res) => {
   if (Number(other_user_id) === req.user.id) return res.status(400).json({ error: "You can't message yourself" });
 
   try {
-    const otherUser = await db.query('SELECT id FROM users WHERE id = $1 AND role::text = ANY($2::text[])', [other_user_id, STAFF_ROLES]);
+    const otherUser = await db.query('SELECT id FROM users WHERE id = $1 AND role = ANY($2::text[])', [other_user_id, STAFF_ROLES]);
     if (otherUser.rows.length === 0) return res.status(404).json({ error: 'Staff member not found' });
 
     const [userA, userB] = orderPair(req.user.id, Number(other_user_id));
