@@ -12,10 +12,8 @@ const router = express.Router();
 // no longer has a meaningful "pending" state — every item created here is
 // just part of the record from the moment it's written.
 
-// POST /api/prescriptions — doctor prescribes one or more medicines.
-// Free-text medicine name — this is documentation, not an inventory pull,
-// so it's not limited to whatever's in the clinic's supply catalog.
-// body: { patient_id, appointment_id?, admission_id?, items: [{ medicine_name, dosage, frequency, duration_days }] }
+// POST /api/prescriptions — doctor prescribes one or more medicines
+// body: { patient_id, appointment_id?, admission_id?, items: [{ medicine_id, dosage, frequency, duration_days }] }
 router.post('/', authenticate, authorize('doctor'), async (req, res) => {
   const { patient_id, appointment_id, admission_id, items } = req.body;
 
@@ -36,15 +34,15 @@ router.post('/', authenticate, authorize('doctor'), async (req, res) => {
 
     const insertedItems = [];
     for (const item of items) {
-      const { medicine_name, dosage, frequency, duration_days } = item;
-      if (!medicine_name || !medicine_name.trim()) {
+      const { medicine_id, dosage, frequency, duration_days } = item;
+      if (!medicine_id) {
         await client.query('ROLLBACK');
-        return res.status(400).json({ error: 'Each item requires a medicine_name' });
+        return res.status(400).json({ error: 'Each item requires a medicine_id' });
       }
       const itemResult = await client.query(
-        `INSERT INTO prescription_items (prescription_id, medicine_name, dosage, frequency, duration_days)
+        `INSERT INTO prescription_items (prescription_id, medicine_id, dosage, frequency, duration_days)
          VALUES ($1,$2,$3,$4,$5) RETURNING *`,
-        [prescription.id, medicine_name.trim(), dosage, frequency, duration_days]
+        [prescription.id, medicine_id, dosage, frequency, duration_days]
       );
       insertedItems.push(itemResult.rows[0]);
     }
@@ -116,7 +114,10 @@ router.get('/:id', authenticate, authorize('admin', 'doctor', 'nurse'), async (r
     if (prescription.rows.length === 0) return res.status(404).json({ error: 'Prescription not found' });
 
     const items = await db.query(
-      `SELECT * FROM prescription_items WHERE prescription_id = $1`,
+      `SELECT pi.*, m.name AS medicine_name, m.unit
+       FROM prescription_items pi
+       JOIN inventory_items m ON m.id = pi.medicine_id
+       WHERE pi.prescription_id = $1`,
       [req.params.id]
     );
 

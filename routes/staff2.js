@@ -57,9 +57,8 @@ router.get('/:id/availability', authenticate, async (req, res) => {
   }
 });
 
-// POST /api/staff/:id/availability — admin only. Doctors can view their
-// own hours (see the GET above) but never set them — see the
-// canManageAvailability comment above for why.
+// POST /api/staff/:id/availability — admin can set anyone's; a doctor can
+// only set their own.
 // body: { day_of_week (0-6, Sun-Sat), start_time ("09:00"), end_time ("13:00"), slot_minutes? }
 router.post('/:id/availability', authenticate, async (req, res) => {
   if (!canManageAvailability(req)) {

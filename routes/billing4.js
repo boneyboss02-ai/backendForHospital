@@ -94,24 +94,17 @@ router.patch('/invoices/:id/due-date', authenticate, authorize('admin', 'recepti
 });
 
 // GET /api/billing/invoices?patient_id=&status=&from=&to=&overdue=true
-// Admin/receptionist see everything (patient_id is caller-supplied). A
-// doctor can view this too — read-only, and only for patients they
-// actually treat (same relationship check used everywhere else a doctor
-// touches patient data) — they can't create invoices, add items, take
-// payments, or review payment proofs; that stays reception/admin work.
-// Patients use /api/portal/invoices instead.
-router.get('/invoices', authenticate, authorize('admin', 'receptionist', 'doctor'), async (req, res) => {
+// Staff-only — patient_id is caller-supplied. Patients use /api/portal/invoices.
+// `from`/`to` filter by invoice creation date (YYYY-MM-DD, inclusive) — this
+// is what powers "by day" filtering on the Billing page. `overdue=true`
+// means "has a due_date in the past and still isn't fully paid" — it's a
+// filter, not a separate list, so it composes with the others (e.g.
+// overdue=true&patient_id=12).
+router.get('/invoices', authenticate, authorize('admin', 'receptionist'), async (req, res) => {
   const { patient_id, status, from, to, overdue } = req.query;
   const conditions = [];
   const values = [];
   let i = 1;
-  if (req.user.role === 'doctor') {
-    conditions.push(
-      `i.patient_id IN (SELECT patient_id FROM appointments WHERE doctor_id = $${i++}
-                        UNION SELECT patient_id FROM admissions WHERE attending_doctor_id = $${i - 1})`
-    );
-    values.push(req.user.id);
-  }
   if (patient_id) { conditions.push(`i.patient_id = $${i++}`); values.push(patient_id); }
   if (status) { conditions.push(`i.status = $${i++}`); values.push(status); }
   if (from) { conditions.push(`i.created_at::date >= $${i++}::date`); values.push(from); }
@@ -138,9 +131,10 @@ router.get('/invoices', authenticate, authorize('admin', 'receptionist', 'doctor
   }
 });
 
-// GET /api/billing/invoices/:id — full detail with line items and payments.
-// Same doctor-scoping as the list above.
-router.get('/invoices/:id', authenticate, authorize('admin', 'receptionist', 'doctor'), async (req, res) => {
+// GET /api/billing/invoices/:id — full detail with line items and payments
+// Staff-only — patients use /api/portal/invoices/:id, which checks
+// ownership server-side rather than trusting the id in the URL.
+router.get('/invoices/:id', authenticate, authorize('admin', 'receptionist'), async (req, res) => {
   try {
     const invoice = await db.query(
       `SELECT i.*, p.full_name AS patient_name, p.patient_code
@@ -149,17 +143,6 @@ router.get('/invoices/:id', authenticate, authorize('admin', 'receptionist', 'do
       [req.params.id]
     );
     if (invoice.rows.length === 0) return res.status(404).json({ error: 'Invoice not found' });
-
-    if (req.user.role === 'doctor') {
-      const related = await db.query(
-        `SELECT 1 FROM appointments WHERE doctor_id = $1 AND patient_id = $2
-         UNION SELECT 1 FROM admissions WHERE attending_doctor_id = $1 AND patient_id = $2`,
-        [req.user.id, invoice.rows[0].patient_id]
-      );
-      if (related.rows.length === 0) {
-        return res.status(403).json({ error: 'You have no appointments or admissions with this patient' });
-      }
-    }
 
     const items = await db.query('SELECT * FROM invoice_items WHERE invoice_id = $1', [req.params.id]);
     const payments = await db.query('SELECT * FROM payments WHERE invoice_id = $1 ORDER BY paid_at DESC', [req.params.id]);

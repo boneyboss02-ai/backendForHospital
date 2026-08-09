@@ -310,9 +310,10 @@ router.get('/:id/history', authenticate, authorize('admin', 'receptionist', 'doc
     let itemsByPrescription = {};
     if (prescriptionIds.length > 0) {
       const items = await db.query(
-        `SELECT prescription_id, dosage, frequency, duration_days, medicine_name
-         FROM prescription_items
-         WHERE prescription_id = ANY($1::int[])`,
+        `SELECT pi.prescription_id, pi.dosage, pi.frequency, pi.duration_days, m.name AS medicine_name
+         FROM prescription_items pi
+         JOIN inventory_items m ON m.id = pi.medicine_id
+         WHERE pi.prescription_id = ANY($1::int[])`,
         [prescriptionIds]
       );
       itemsByPrescription = items.rows.reduce((acc, item) => {
