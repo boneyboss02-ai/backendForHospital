@@ -19,17 +19,6 @@ router.get('/', authenticate, async (req, res) => {
 
   if (role) { conditions.push(`u.role = $${i++}`); values.push(role); }
   if (search) { conditions.push(`u.full_name ILIKE $${i++}`); values.push(`%${search}%`); }
-  // A branch-scoped caller (receptionist/nurse/branch admin) only ever
-  // sees staff at their own branch — most importantly, this keeps a
-  // receptionist from booking a patient with a doctor at another branch,
-  // which is physically impossible anyway. A patient (never branch-scoped)
-  // or a general admin sees everyone, which is correct for both: a
-  // patient picks which branch's doctor to see, and general admin
-  // oversees all of them.
-  if (isBranchScoped(req)) {
-    conditions.push(`u.branch_id = $${i++}`);
-    values.push(req.user.branch_id);
-  }
 
   try {
     const result = await db.query(

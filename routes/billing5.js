@@ -1,26 +1,8 @@
 const express = require('express');
 const db = require('../config/db');
 const { authenticate, authorize } = require('../middleware/auth');
-const { isBranchScoped } = require('../utils/branchScope');
 
 const router = express.Router();
-
-// Used by the three write endpoints below (due-date, add item, add payment)
-// to stop a branch-scoped admin/receptionist from modifying another
-// branch's invoice. Returns the invoice row, or null (and already sent a
-// 404/403 response) if the caller shouldn't proceed.
-async function loadInvoiceForWrite(req, res) {
-  const invoice = await db.query('SELECT * FROM invoices WHERE id = $1', [req.params.id]);
-  if (invoice.rows.length === 0) {
-    res.status(404).json({ error: 'Invoice not found' });
-    return null;
-  }
-  if (isBranchScoped(req) && invoice.rows[0].branch_id !== req.user.branch_id) {
-    res.status(403).json({ error: 'This invoice is not for your branch' });
-    return null;
-  }
-  return invoice.rows[0];
-}
 
 async function recalculateInvoiceStatus(client, invoiceId) {
   const result = await client.query(
@@ -45,50 +27,15 @@ async function recalculateInvoiceStatus(client, invoiceId) {
 // body: { patient_id, appointment_id?, admission_id?, items?: [{description, quantity, unit_price}] }
 router.post('/invoices', authenticate, authorize('admin', 'receptionist'), async (req, res) => {
   const { patient_id, appointment_id, admission_id, items, due_date } = req.body;
-  let { branch_id } = req.body;
   if (!patient_id) return res.status(400).json({ error: 'patient_id is required' });
 
   const client = await db.pool.connect();
   try {
     await client.query('BEGIN');
 
-    // The branch comes from whatever this invoice is tied to — the visit
-    // (appointment) or the chair (admission) it belongs to — rather than
-    // just wherever the receptionist creating it happens to be, so it's
-    // still right even in the (currently theoretical, since staff can't
-    // work more than one branch) case those don't match the caller.
-    if (appointment_id) {
-      const appt = await client.query('SELECT branch_id FROM appointments WHERE id = $1', [appointment_id]);
-      if (appt.rows.length === 0) {
-        await client.query('ROLLBACK');
-        return res.status(404).json({ error: 'Appointment not found' });
-      }
-      branch_id = appt.rows[0].branch_id;
-    } else if (admission_id) {
-      const adm = await client.query(
-        `SELECT w.branch_id FROM admissions a JOIN beds b ON b.id = a.bed_id JOIN wards w ON w.id = b.ward_id WHERE a.id = $1`,
-        [admission_id]
-      );
-      if (adm.rows.length === 0) {
-        await client.query('ROLLBACK');
-        return res.status(404).json({ error: 'Admission not found' });
-      }
-      branch_id = adm.rows[0].branch_id;
-    } else if (isBranchScoped(req)) {
-      branch_id = req.user.branch_id;
-    } else if (!branch_id) {
-      await client.query('ROLLBACK');
-      return res.status(400).json({ error: 'branch_id is required when not tied to an appointment or admission' });
-    }
-
-    if (isBranchScoped(req) && branch_id !== req.user.branch_id) {
-      await client.query('ROLLBACK');
-      return res.status(403).json({ error: 'This invoice is not for your branch' });
-    }
-
     const invoiceResult = await client.query(
-      `INSERT INTO invoices (patient_id, appointment_id, admission_id, due_date, branch_id) VALUES ($1,$2,$3,$4,$5) RETURNING *`,
-      [patient_id, appointment_id || null, admission_id || null, due_date || null, branch_id]
+      `INSERT INTO invoices (patient_id, appointment_id, admission_id, due_date) VALUES ($1,$2,$3,$4) RETURNING *`,
+      [patient_id, appointment_id || null, admission_id || null, due_date || null]
     );
     let invoice = invoiceResult.rows[0];
 
@@ -134,11 +81,11 @@ router.post('/invoices', authenticate, authorize('admin', 'receptionist'), async
 router.patch('/invoices/:id/due-date', authenticate, authorize('admin', 'receptionist'), async (req, res) => {
   const { due_date } = req.body;
   try {
-    if (!(await loadInvoiceForWrite(req, res))) return;
     const result = await db.query(
       'UPDATE invoices SET due_date = $1 WHERE id = $2 RETURNING *',
       [due_date || null, req.params.id]
     );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Invoice not found' });
     res.json({ invoice: result.rows[0] });
   } catch (err) {
     console.error(err);
@@ -165,18 +112,6 @@ router.get('/invoices', authenticate, authorize('admin', 'receptionist', 'doctor
     );
     values.push(req.user.id);
   }
-  // A doctor's invoices are already implicitly within their own branch
-  // (their patients only ever come from their own branch's appointments),
-  // so no separate filter is needed for that role — same reasoning as
-  // appointments.js. This only actively filters for a branch-scoped
-  // admin/receptionist.
-  if (req.user.role !== 'doctor' && isBranchScoped(req)) {
-    conditions.push(`i.branch_id = $${i++}`);
-    values.push(req.user.branch_id);
-  } else if (req.user.role !== 'doctor' && req.query.branch_id) {
-    conditions.push(`i.branch_id = $${i++}`);
-    values.push(req.query.branch_id);
-  }
   if (patient_id) { conditions.push(`i.patient_id = $${i++}`); values.push(patient_id); }
   if (status) { conditions.push(`i.status = $${i++}`); values.push(status); }
   if (from) { conditions.push(`i.created_at::date >= $${i++}::date`); values.push(from); }
@@ -188,11 +123,10 @@ router.get('/invoices', authenticate, authorize('admin', 'receptionist', 'doctor
 
   try {
     const result = await db.query(
-      `SELECT i.*, p.full_name AS patient_name, p.patient_code, br.name AS branch_name,
+      `SELECT i.*, p.full_name AS patient_name, p.patient_code,
               (i.due_date IS NOT NULL AND i.due_date < CURRENT_DATE AND i.status IN ('unpaid', 'partially_paid')) AS is_overdue
        FROM invoices i
        JOIN patients p ON p.id = i.patient_id
-       JOIN branches br ON br.id = i.branch_id
        ${where}
        ORDER BY i.created_at DESC`,
       values
@@ -225,8 +159,6 @@ router.get('/invoices/:id', authenticate, authorize('admin', 'receptionist', 'do
       if (related.rows.length === 0) {
         return res.status(403).json({ error: 'You have no appointments or admissions with this patient' });
       }
-    } else if (isBranchScoped(req) && invoice.rows[0].branch_id !== req.user.branch_id) {
-      return res.status(403).json({ error: 'This invoice is not for your branch' });
     }
 
     const items = await db.query('SELECT * FROM invoice_items WHERE invoice_id = $1', [req.params.id]);
@@ -251,7 +183,6 @@ router.post('/invoices/:id/items', authenticate, authorize('admin', 'receptionis
   const client = await db.pool.connect();
   try {
     await client.query('BEGIN');
-    if (!(await loadInvoiceForWrite(req, res))) { await client.query('ROLLBACK'); return; }
     const item = await client.query(
       `INSERT INTO invoice_items (invoice_id, description, quantity, unit_price, line_total)
        VALUES ($1,$2,$3,$4,$5) RETURNING *`,
@@ -294,10 +225,6 @@ router.post('/invoices/:id/payments', authenticate, authorize('admin', 'receptio
     if (invoiceCheck.rows.length === 0) {
       await client.query('ROLLBACK');
       return res.status(404).json({ error: 'Invoice not found' });
-    }
-    if (isBranchScoped(req) && invoiceCheck.rows[0].branch_id !== req.user.branch_id) {
-      await client.query('ROLLBACK');
-      return res.status(403).json({ error: 'This invoice is not for your branch' });
     }
 
     const payment = await client.query(

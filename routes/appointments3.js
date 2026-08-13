@@ -4,8 +4,6 @@ const { authenticate, authorize } = require('../middleware/auth');
 const { getAvailableSlots, isWithinWorkingHours, isTimeSlotTaken } = require('../utils/availability');
 const { createNotification } = require('../utils/notifications');
 
-const { isBranchScoped } = require('../utils/branchScope');
-
 const router = express.Router();
 
 // GET /api/appointments/availability?doctor_id=&date=YYYY-MM-DD
@@ -39,27 +37,6 @@ router.post('/', authenticate, authorize('admin', 'receptionist'), async (req, r
     return res.status(400).json({ error: 'patient_id, doctor_id, and scheduled_at are required' });
   }
 
-  // The appointment's branch is the doctor's branch — where a doctor works
-  // is where the visit physically happens, not wherever the receptionist
-  // booking it happens to be logged in from. Stored directly on the
-  // appointment (not just looked up via doctor_id later) so it stays
-  // correct historically even if the doctor is moved to a different
-  // branch afterward.
-  let branch_id;
-  try {
-    const doctorRow = await db.query('SELECT branch_id FROM users WHERE id = $1 AND role = $2', [doctor_id, 'doctor']);
-    if (doctorRow.rows.length === 0) {
-      return res.status(404).json({ error: 'Doctor not found' });
-    }
-    branch_id = doctorRow.rows[0].branch_id;
-    if (isBranchScoped(req) && branch_id !== req.user.branch_id) {
-      return res.status(403).json({ error: 'This doctor is not at your branch' });
-    }
-  } catch (err) {
-    console.error(err);
-    return res.status(500).json({ error: 'Server error looking up doctor' });
-  }
-
   let warning = null;
   try {
     const taken = await isTimeSlotTaken(doctor_id, scheduled_at);
@@ -91,9 +68,9 @@ router.post('/', authenticate, authorize('admin', 'receptionist'), async (req, r
     const token_number = tokenResult.rows[0].next_token;
 
     const result = await client.query(
-      `INSERT INTO appointments (patient_id, doctor_id, scheduled_at, token_number, reason, created_by, branch_id)
-       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
-      [patient_id, doctor_id, scheduled_at, token_number, reason, req.user.id, branch_id]
+      `INSERT INTO appointments (patient_id, doctor_id, scheduled_at, token_number, reason, created_by)
+       VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+      [patient_id, doctor_id, scheduled_at, token_number, reason, req.user.id]
     );
     const appointment = result.rows[0];
 
@@ -154,21 +131,6 @@ router.get('/', authenticate, authorize('admin', 'receptionist', 'doctor', 'nurs
   const values = [];
   let i = 1;
 
-  // A doctor's own appointments are already within their own branch by
-  // construction (see POST / above), so this only needs to actively filter
-  // for the other roles — a branch-scoped receptionist/nurse/branch admin
-  // only ever sees their branch's appointments. A general admin (or a
-  // doctor, whose scoping is already handled above) isn't filtered here.
-  if (req.user.role !== 'doctor' && isBranchScoped(req)) {
-    conditions.push(`a.branch_id = $${i++}`);
-    values.push(req.user.branch_id);
-  } else if (req.user.role !== 'doctor' && req.query.branch_id) {
-    // General admin narrowing to one branch — optional, unlike the
-    // forced filter above.
-    conditions.push(`a.branch_id = $${i++}`);
-    values.push(req.query.branch_id);
-  }
-
   if (doctor_id) { conditions.push(`a.doctor_id = $${i++}`); values.push(doctor_id); }
   if (patient_id) { conditions.push(`a.patient_id = $${i++}`); values.push(patient_id); }
   if (date) { conditions.push(`a.scheduled_at::date = $${i++}::date`); values.push(date); }
@@ -178,11 +140,10 @@ router.get('/', authenticate, authorize('admin', 'receptionist', 'doctor', 'nurs
 
   try {
     const result = await db.query(
-      `SELECT a.*, p.full_name AS patient_name, p.patient_code, u.full_name AS doctor_name, br.name AS branch_name
+      `SELECT a.*, p.full_name AS patient_name, p.patient_code, u.full_name AS doctor_name
        FROM appointments a
        JOIN patients p ON p.id = a.patient_id
        JOIN users u ON u.id = a.doctor_id
-       JOIN branches br ON br.id = a.branch_id
        ${where}
        ORDER BY a.scheduled_at ASC`,
       values
@@ -297,8 +258,8 @@ router.post('/:id/consultation', authenticate, authorize('doctor'), async (req, 
       );
       if (existing.rows.length > 0) return existing.rows[0];
       const created = await client.query(
-        `INSERT INTO invoices (patient_id, appointment_id, branch_id) VALUES ($1,$2,$3) RETURNING *`,
-        [appointment.patient_id, appointment.id, appointment.branch_id]
+        `INSERT INTO invoices (patient_id, appointment_id) VALUES ($1,$2) RETURNING *`,
+        [appointment.patient_id, appointment.id]
       );
       return created.rows[0];
     }
@@ -362,36 +323,20 @@ router.post('/:id/consultation', authenticate, authorize('doctor'), async (req, 
     // that a dental clinic doesn't charge patients for consumables
     // directly. Doctors can only consume through this path; they can't add
     // stock or restock (that's admin-only, in routes/inventory.js).
-    //
-    // Each item_id must belong to THIS appointment's own branch. This
-    // matters now that inventory is per-branch (each branch has its own
-    // separate stock, not a shared catalog) — without this check, a
-    // treatment recipe authored by looking at one branch's inventory could
-    // silently decrement a completely different branch's stock if a
-    // doctor elsewhere used the same treatment. The frontend already
-    // resolves treatment ingredients against the doctor's own branch
-    // before sending this request; this is the server-side backstop that
-    // makes it a real guarantee instead of just a UI assumption.
     const usageLog = [];
     if (Array.isArray(items_used) && items_used.length > 0) {
       for (const usage of items_used) {
         const { item_id, quantity } = usage;
         if (!item_id || !quantity || quantity <= 0) continue;
 
-        const itemCheck = await client.query('SELECT branch_id FROM inventory_items WHERE id = $1', [item_id]);
-        if (itemCheck.rows.length === 0) {
-          await client.query('ROLLBACK');
-          return res.status(404).json({ error: `Inventory item ${item_id} not found` });
-        }
-        if (itemCheck.rows[0].branch_id !== appointment.branch_id) {
-          await client.query('ROLLBACK');
-          return res.status(400).json({ error: `Inventory item ${item_id} belongs to a different branch than this appointment` });
-        }
-
         const updated = await client.query(
           `UPDATE inventory_items SET stock_quantity = stock_quantity - $1 WHERE id = $2 RETURNING *`,
           [quantity, item_id]
         );
+        if (updated.rows.length === 0) {
+          await client.query('ROLLBACK');
+          return res.status(404).json({ error: `Inventory item ${item_id} not found` });
+        }
         if (updated.rows[0].stock_quantity < 0) {
           await client.query('ROLLBACK');
           return res.status(409).json({ error: `Not enough stock of "${updated.rows[0].name}" for this quantity` });

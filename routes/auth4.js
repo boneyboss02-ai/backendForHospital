@@ -44,7 +44,7 @@ router.post('/login', async (req, res) => {
     }
 
     const token = jwt.sign(
-      { id: user.id, role: user.role, full_name: user.full_name, email: user.email, branch_id: user.branch_id },
+      { id: user.id, role: user.role, full_name: user.full_name, email: user.email },
       process.env.JWT_SECRET,
       { expiresIn: process.env.JWT_EXPIRES_IN || '8h' }
     );
@@ -56,7 +56,6 @@ router.post('/login', async (req, res) => {
         full_name: user.full_name,
         email: user.email,
         role: user.role,
-        branch_id: user.branch_id,
         must_change_password: user.must_change_password,
       },
     });
@@ -283,14 +282,14 @@ router.post('/verify-email', async (req, res) => {
     await client.query('COMMIT');
 
     const token = jwt.sign(
-      { id: user.id, role: user.role, full_name: user.full_name, email: user.email, branch_id: user.branch_id },
+      { id: user.id, role: user.role, full_name: user.full_name, email: user.email },
       process.env.JWT_SECRET,
       { expiresIn: process.env.JWT_EXPIRES_IN || '8h' }
     );
 
     res.json({
       token,
-      user: { id: user.id, full_name: user.full_name, email: user.email, role: user.role, branch_id: user.branch_id, must_change_password: user.must_change_password },
+      user: { id: user.id, full_name: user.full_name, email: user.email, role: user.role, must_change_password: user.must_change_password },
       patient: patientResult.rows[0] || null,
     });
   } catch (err) {

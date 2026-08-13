@@ -173,9 +173,6 @@ router.get('/invoices', authenticate, authorize('admin', 'receptionist', 'doctor
   if (req.user.role !== 'doctor' && isBranchScoped(req)) {
     conditions.push(`i.branch_id = $${i++}`);
     values.push(req.user.branch_id);
-  } else if (req.user.role !== 'doctor' && req.query.branch_id) {
-    conditions.push(`i.branch_id = $${i++}`);
-    values.push(req.query.branch_id);
   }
   if (patient_id) { conditions.push(`i.patient_id = $${i++}`); values.push(patient_id); }
   if (status) { conditions.push(`i.status = $${i++}`); values.push(status); }
@@ -188,11 +185,10 @@ router.get('/invoices', authenticate, authorize('admin', 'receptionist', 'doctor
 
   try {
     const result = await db.query(
-      `SELECT i.*, p.full_name AS patient_name, p.patient_code, br.name AS branch_name,
+      `SELECT i.*, p.full_name AS patient_name, p.patient_code,
               (i.due_date IS NOT NULL AND i.due_date < CURRENT_DATE AND i.status IN ('unpaid', 'partially_paid')) AS is_overdue
        FROM invoices i
        JOIN patients p ON p.id = i.patient_id
-       JOIN branches br ON br.id = i.branch_id
        ${where}
        ORDER BY i.created_at DESC`,
       values

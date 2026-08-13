@@ -1,7 +1,6 @@
 const express = require('express');
 const db = require('../config/db');
 const { authenticate, authorize } = require('../middleware/auth');
-const { isBranchScoped } = require('../utils/branchScope');
 
 const router = express.Router();
 
@@ -27,115 +26,54 @@ function dateRange(req) {
 router.get('/overview', authenticate, authorize('admin', 'receptionist'), async (req, res) => {
   const { from, to } = dateRange(req);
   const isAdmin = req.user.role === 'admin';
-  // A branch-scoped admin/receptionist only ever sees their own branch's
-  // numbers; a general admin sees everything combined, same as everywhere
-  // else in the app. `new_patients` is the one exception — patients aren't
-  // owned by a branch (they're shared across all of them, by design), so
-  // that figure is always clinic-wide regardless of whose report this is.
-  const isGeneralAdmin = !isBranchScoped(req);
-  // A general admin can optionally drill into one branch via ?branch_id=;
-  // anyone branch-scoped is always forced to their own branch regardless
-  // of what's passed.
-  const requestedBranchId = isGeneralAdmin && req.query.branch_id ? Number(req.query.branch_id) : null;
-  const scoped = isBranchScoped(req) || requestedBranchId !== null;
-  const branchId = isBranchScoped(req) ? req.user.branch_id : requestedBranchId;
 
   try {
-    const [revenue, invoicesIssued, newPatients, apptsByStatus, apptsByDoctor, revenueByDay, lowStock, chairUtilization, expensesTotal, expensesByCategory, suppliesCost, byBranch] = await Promise.all([
-      db.query(
-        `SELECT COALESCE(SUM(pay.amount), 0) AS total
-         FROM payments pay JOIN invoices i ON i.id = pay.invoice_id
-         WHERE pay.paid_at BETWEEN $1 AND $2 ${scoped ? 'AND i.branch_id = $3' : ''}`,
-        scoped ? [from, to, branchId] : [from, to]
-      ),
-      db.query(
-        `SELECT COUNT(*) AS count, COALESCE(SUM(total_amount), 0) AS total
-         FROM invoices WHERE created_at BETWEEN $1 AND $2 ${scoped ? 'AND branch_id = $3' : ''}`,
-        scoped ? [from, to, branchId] : [from, to]
-      ),
+    const [revenue, invoicesIssued, newPatients, apptsByStatus, apptsByDoctor, revenueByDay, lowStock, chairUtilization, expensesTotal, expensesByCategory, suppliesCost] = await Promise.all([
+      db.query(`SELECT COALESCE(SUM(amount), 0) AS total FROM payments WHERE paid_at BETWEEN $1 AND $2`, [from, to]),
+      db.query(`SELECT COUNT(*) AS count, COALESCE(SUM(total_amount), 0) AS total FROM invoices WHERE created_at BETWEEN $1 AND $2`, [from, to]),
       db.query(`SELECT COUNT(*) AS count FROM patients WHERE created_at BETWEEN $1 AND $2`, [from, to]),
       db.query(
-        `SELECT status, COUNT(*) AS count FROM appointments
-         WHERE scheduled_at BETWEEN $1 AND $2 ${scoped ? 'AND branch_id = $3' : ''}
-         GROUP BY status`,
-        scoped ? [from, to, branchId] : [from, to]
+        `SELECT status, COUNT(*) AS count FROM appointments WHERE scheduled_at BETWEEN $1 AND $2 GROUP BY status`,
+        [from, to]
       ),
       db.query(
         `SELECT u.full_name AS doctor_name, COUNT(*) AS count
          FROM appointments a JOIN users u ON u.id = a.doctor_id
-         WHERE a.scheduled_at BETWEEN $1 AND $2 ${scoped ? 'AND a.branch_id = $3' : ''}
+         WHERE a.scheduled_at BETWEEN $1 AND $2
          GROUP BY u.full_name ORDER BY count DESC LIMIT 10`,
-        scoped ? [from, to, branchId] : [from, to]
+        [from, to]
       ),
       db.query(
-        `SELECT DATE(pay.paid_at) AS day, COALESCE(SUM(pay.amount), 0) AS total
-         FROM payments pay JOIN invoices i ON i.id = pay.invoice_id
-         WHERE pay.paid_at BETWEEN $1 AND $2 ${scoped ? 'AND i.branch_id = $3' : ''}
-         GROUP BY DATE(pay.paid_at) ORDER BY day`,
-        scoped ? [from, to, branchId] : [from, to]
+        `SELECT DATE(paid_at) AS day, COALESCE(SUM(amount), 0) AS total
+         FROM payments WHERE paid_at BETWEEN $1 AND $2
+         GROUP BY DATE(paid_at) ORDER BY day`,
+        [from, to]
       ),
-      db.query(
-        `SELECT COUNT(*) AS count FROM inventory_items WHERE stock_quantity <= reorder_level ${scoped ? 'AND branch_id = $1' : ''}`,
-        scoped ? [branchId] : []
-      ),
+      db.query(`SELECT COUNT(*) AS count FROM inventory_items WHERE stock_quantity <= reorder_level`),
       db.query(
         `SELECT w.name AS room_name, COUNT(*) FILTER (WHERE b.status = 'occupied') AS occupied, COUNT(*) AS total
          FROM beds b JOIN wards w ON w.id = b.ward_id
-         ${scoped ? 'WHERE w.branch_id = $1' : ''}
-         GROUP BY w.name ORDER BY w.name`,
-        scoped ? [branchId] : []
+         GROUP BY w.name ORDER BY w.name`
       ),
       isAdmin
-        ? db.query(
-            `SELECT COALESCE(SUM(amount), 0) AS total FROM expenses
-             WHERE expense_date BETWEEN $1 AND $2 ${scoped ? 'AND branch_id = $3' : ''}`,
-            scoped ? [from, to, branchId] : [from, to]
-          )
+        ? db.query(`SELECT COALESCE(SUM(amount), 0) AS total FROM expenses WHERE expense_date BETWEEN $1 AND $2`, [from, to])
         : Promise.resolve({ rows: [{ total: 0 }] }),
       isAdmin
         ? db.query(
             `SELECT category, COALESCE(SUM(amount), 0) AS total
-             FROM expenses WHERE expense_date BETWEEN $1 AND $2 ${scoped ? 'AND branch_id = $3' : ''}
+             FROM expenses WHERE expense_date BETWEEN $1 AND $2
              GROUP BY category ORDER BY total DESC`,
-            scoped ? [from, to, branchId] : [from, to]
+            [from, to]
           )
         : Promise.resolve({ rows: [] }),
       isAdmin
         ? db.query(
             `SELECT COALESCE(SUM(iu.quantity * i.unit_price), 0) AS total
              FROM inventory_usage iu JOIN inventory_items i ON i.id = iu.item_id
-             WHERE iu.used_at BETWEEN $1 AND $2 ${scoped ? 'AND i.branch_id = $3' : ''}`,
-            scoped ? [from, to, branchId] : [from, to]
-          )
-        : Promise.resolve({ rows: [{ total: 0 }] }),
-      // Only fetched for the "all branches at once" view — a general
-      // admin with no ?branch_id= drill-down — so this table can act as
-      // the entry point into drilling into any one of them.
-      isAdmin && isGeneralAdmin && !requestedBranchId
-        ? db.query(
-            `SELECT b.id, b.name,
-                    COALESCE(rev.total, 0) AS revenue,
-                    COALESCE(exp.total, 0) AS expenses,
-                    COALESCE(cost.total, 0) AS cost_of_supplies
-             FROM branches b
-             LEFT JOIN (
-               SELECT i.branch_id, SUM(pay.amount) AS total
-               FROM payments pay JOIN invoices i ON i.id = pay.invoice_id
-               WHERE pay.paid_at BETWEEN $1 AND $2 GROUP BY i.branch_id
-             ) rev ON rev.branch_id = b.id
-             LEFT JOIN (
-               SELECT branch_id, SUM(amount) AS total FROM expenses
-               WHERE expense_date BETWEEN $1 AND $2 GROUP BY branch_id
-             ) exp ON exp.branch_id = b.id
-             LEFT JOIN (
-               SELECT i.branch_id, SUM(iu.quantity * i.unit_price) AS total
-               FROM inventory_usage iu JOIN inventory_items i ON i.id = iu.item_id
-               WHERE iu.used_at BETWEEN $1 AND $2 GROUP BY i.branch_id
-             ) cost ON cost.branch_id = b.id
-             ORDER BY b.name`,
+             WHERE iu.used_at BETWEEN $1 AND $2`,
             [from, to]
           )
-        : Promise.resolve({ rows: null }),
+        : Promise.resolve({ rows: [{ total: 0 }] }),
     ]);
 
     const revenueTotal = Number(revenue.rows[0].total);
@@ -170,16 +108,6 @@ router.get('/overview', authenticate, authorize('admin', 'receptionist'), async 
         // they'll already be included in `expenses` and this profit figure.
         profit: revenueTotal - expensesTotalNum - suppliesCostNum,
       } : {}),
-      ...(byBranch.rows ? {
-        by_branch: byBranch.rows.map((r) => ({
-          branch_id: r.id,
-          branch_name: r.name,
-          revenue: Number(r.revenue),
-          expenses: Number(r.expenses),
-          cost_of_supplies: Number(r.cost_of_supplies),
-          profit: Number(r.revenue) - Number(r.expenses) - Number(r.cost_of_supplies),
-        })),
-      } : {}),
     });
   } catch (err) {
     console.error(err);
@@ -203,13 +131,6 @@ router.get('/profitability', authenticate, authorize('admin'), async (req, res) 
   const conditions = [`a.status = 'completed'`, `a.scheduled_at BETWEEN $1 AND $2`];
   const values = [from, to];
   let i = 3;
-  if (isBranchScoped(req)) {
-    conditions.push(`a.branch_id = $${i++}`);
-    values.push(req.user.branch_id);
-  } else if (req.query.branch_id) {
-    conditions.push(`a.branch_id = $${i++}`);
-    values.push(Number(req.query.branch_id));
-  }
   if (doctor_id) { conditions.push(`a.doctor_id = $${i++}`); values.push(doctor_id); }
   if (patient_id) { conditions.push(`a.patient_id = $${i++}`); values.push(patient_id); }
 
@@ -235,11 +156,7 @@ router.get('/profitability', authenticate, authorize('admin'), async (req, res) 
          ORDER BY a.scheduled_at DESC`,
         values
       ),
-      isBranchScoped(req)
-        ? db.query(`SELECT COALESCE(SUM(amount), 0) AS total FROM expenses WHERE expense_date BETWEEN $1 AND $2 AND branch_id = $3`, [from, to, req.user.branch_id])
-        : req.query.branch_id
-          ? db.query(`SELECT COALESCE(SUM(amount), 0) AS total FROM expenses WHERE expense_date BETWEEN $1 AND $2 AND branch_id = $3`, [from, to, Number(req.query.branch_id)])
-          : db.query(`SELECT COALESCE(SUM(amount), 0) AS total FROM expenses WHERE expense_date BETWEEN $1 AND $2`, [from, to]),
+      db.query(`SELECT COALESCE(SUM(amount), 0) AS total FROM expenses WHERE expense_date BETWEEN $1 AND $2`, [from, to]),
     ]);
 
     const rows = visits.rows.map((v) => {

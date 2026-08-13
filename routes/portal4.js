@@ -126,20 +126,6 @@ router.post('/appointments', async (req, res) => {
     return res.status(400).json({ error: 'doctor_id and scheduled_at are required' });
   }
 
-  // Patients aren't tied to a branch — they pick whichever branch's doctor
-  // they want to see, and the appointment takes that doctor's branch.
-  let branch_id;
-  try {
-    const doctorRow = await db.query('SELECT branch_id FROM users WHERE id = $1 AND role = $2', [doctor_id, 'doctor']);
-    if (doctorRow.rows.length === 0) {
-      return res.status(404).json({ error: 'Doctor not found' });
-    }
-    branch_id = doctorRow.rows[0].branch_id;
-  } catch (err) {
-    console.error(err);
-    return res.status(500).json({ error: 'Server error looking up doctor' });
-  }
-
   let warning = null;
   try {
     const taken = await isTimeSlotTaken(doctor_id, scheduled_at);
@@ -167,9 +153,9 @@ router.post('/appointments', async (req, res) => {
     const token_number = tokenResult.rows[0].next_token;
 
     const result = await client.query(
-      `INSERT INTO appointments (patient_id, doctor_id, scheduled_at, token_number, reason, branch_id)
-       VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
-      [req.patient.id, doctor_id, scheduled_at, token_number, reason || null, branch_id]
+      `INSERT INTO appointments (patient_id, doctor_id, scheduled_at, token_number, reason)
+       VALUES ($1,$2,$3,$4,$5) RETURNING *`,
+      [req.patient.id, doctor_id, scheduled_at, token_number, reason || null]
     );
     const appointment = result.rows[0];
 

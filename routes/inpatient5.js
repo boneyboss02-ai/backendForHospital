@@ -20,16 +20,13 @@ router.get('/beds', authenticate, async (req, res) => {
   if (isBranchScoped(req)) {
     conditions.push(`w.branch_id = $${i++}`);
     values.push(req.user.branch_id);
-  } else if (req.query.branch_id) {
-    conditions.push(`w.branch_id = $${i++}`);
-    values.push(req.query.branch_id);
   }
   const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
 
   try {
     const result = await db.query(
-      `SELECT b.*, w.name AS ward_name, w.branch_id, br.name AS branch_name
-       FROM beds b JOIN wards w ON w.id = b.ward_id JOIN branches br ON br.id = w.branch_id
+      `SELECT b.*, w.name AS ward_name
+       FROM beds b JOIN wards w ON w.id = b.ward_id
        ${where}
        ORDER BY w.name, b.bed_number`,
       values
@@ -79,18 +76,12 @@ router.get('/wards', authenticate, async (req, res) => {
   const conditions = [];
   const values = [];
   if (isBranchScoped(req)) {
-    conditions.push('w.branch_id = $1');
+    conditions.push('branch_id = $1');
     values.push(req.user.branch_id);
-  } else if (req.query.branch_id) {
-    conditions.push('w.branch_id = $1');
-    values.push(req.query.branch_id);
   }
   const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
   try {
-    const result = await db.query(
-      `SELECT w.*, b.name AS branch_name FROM wards w JOIN branches b ON b.id = w.branch_id ${where} ORDER BY w.name`,
-      values
-    );
+    const result = await db.query(`SELECT * FROM wards ${where} ORDER BY name`, values);
     res.json({ wards: result.rows });
   } catch (err) {
     console.error(err);
@@ -249,21 +240,17 @@ router.get('/admissions', authenticate, async (req, res) => {
   if (isBranchScoped(req)) {
     conditions.push(`w.branch_id = $${i++}`);
     values.push(req.user.branch_id);
-  } else if (req.query.branch_id) {
-    conditions.push(`w.branch_id = $${i++}`);
-    values.push(req.query.branch_id);
   }
   const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
 
   try {
     const result = await db.query(
       `SELECT ad.*, p.full_name AS patient_name, p.patient_code,
-              b.bed_number, w.name AS ward_name, br.name AS branch_name, u.full_name AS doctor_name
+              b.bed_number, w.name AS ward_name, u.full_name AS doctor_name
        FROM admissions ad
        JOIN patients p ON p.id = ad.patient_id
        LEFT JOIN beds b ON b.id = ad.bed_id
        LEFT JOIN wards w ON w.id = b.ward_id
-       LEFT JOIN branches br ON br.id = w.branch_id
        LEFT JOIN users u ON u.id = ad.attending_doctor_id
        ${where}
        ORDER BY ad.admitted_at DESC`,

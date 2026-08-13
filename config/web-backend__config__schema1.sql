@@ -17,22 +17,6 @@ CREATE TYPE invoice_status AS ENUM ('unpaid', 'partially_paid', 'paid', 'cancell
 -- USERS & AUTH
 -- One row per login-capable person (staff or patient)
 -- ============================================
--- ============================================
--- BRANCHES
--- "Branch admin" and "general admin" are the same role ('admin') —
--- distinguished only by branch_id being set (branch admin, scoped to that
--- branch) or NULL (general admin, sees every branch). Patients and
--- treatments are deliberately NOT branch-scoped — see migration_014 for
--- the full reasoning.
--- ============================================
-CREATE TABLE branches (
-    id SERIAL PRIMARY KEY,
-    name VARCHAR(150) NOT NULL,
-    address VARCHAR(255),
-    phone VARCHAR(20),
-    created_at TIMESTAMP DEFAULT NOW()
-);
-
 CREATE TABLE users (
     id SERIAL PRIMARY KEY,
     full_name VARCHAR(150) NOT NULL,
@@ -40,7 +24,6 @@ CREATE TABLE users (
     phone VARCHAR(20),
     password_hash VARCHAR(255) NOT NULL,
     role user_role NOT NULL,
-    branch_id INTEGER REFERENCES branches(id) ON DELETE SET NULL, -- NULL for patients and for general admins
     is_active BOOLEAN DEFAULT TRUE,
     must_change_password BOOLEAN DEFAULT FALSE, -- true for staff-issued patient accounts until first login password change
     email_verified BOOLEAN DEFAULT TRUE, -- FALSE only for self-signup accounts pending a code; staff-created/invited accounts are pre-verified
@@ -98,7 +81,6 @@ CREATE TABLE doctor_availability (
 -- ============================================
 CREATE TABLE appointments (
     id SERIAL PRIMARY KEY,
-    branch_id INTEGER NOT NULL REFERENCES branches(id) ON DELETE CASCADE, -- stored directly (not derived from doctor_id) so a doctor moving branches later doesn't rewrite history
     patient_id INTEGER REFERENCES patients(id) ON DELETE CASCADE,
     doctor_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
     scheduled_at TIMESTAMP NOT NULL,
@@ -123,7 +105,6 @@ CREATE TABLE consultations (
 -- ============================================
 CREATE TABLE wards (
     id SERIAL PRIMARY KEY,
-    branch_id INTEGER NOT NULL REFERENCES branches(id) ON DELETE CASCADE,
     name VARCHAR(100) NOT NULL, -- e.g. "General Ward A", "ICU"
     floor VARCHAR(20)
 );
@@ -170,7 +151,6 @@ CREATE TABLE vitals_log (
 -- ============================================
 CREATE TABLE inventory_items (
     id SERIAL PRIMARY KEY,
-    branch_id INTEGER NOT NULL REFERENCES branches(id) ON DELETE CASCADE, -- each branch stocks and manages its own — not a shared catalog
     name VARCHAR(150) NOT NULL,
     category VARCHAR(30) NOT NULL DEFAULT 'medicine', -- 'medicine' | 'supply'
     unit VARCHAR(30), -- e.g. "tablet", "ml", "vial", "box"
@@ -268,7 +248,6 @@ CREATE TABLE lab_results (
 -- ============================================
 CREATE TABLE invoices (
     id SERIAL PRIMARY KEY,
-    branch_id INTEGER NOT NULL REFERENCES branches(id) ON DELETE CASCADE,
     patient_id INTEGER REFERENCES patients(id) ON DELETE CASCADE,
     appointment_id INTEGER REFERENCES appointments(id) ON DELETE SET NULL,
     admission_id INTEGER REFERENCES admissions(id) ON DELETE SET NULL,
@@ -304,7 +283,6 @@ CREATE TABLE payments (
 -- description instead.
 CREATE TABLE expenses (
     id SERIAL PRIMARY KEY,
-    branch_id INTEGER NOT NULL REFERENCES branches(id) ON DELETE CASCADE,
     category VARCHAR(30) NOT NULL, -- 'salary' | 'rent' | 'utilities' | 'security' | 'supplies' | 'other'
     description VARCHAR(255) NOT NULL,
     amount NUMERIC(12,2) NOT NULL,
@@ -482,12 +460,6 @@ CREATE INDEX idx_notifications_user ON notifications(user_id, read_at, created_a
 CREATE INDEX idx_appointments_created_by ON appointments(created_by);
 CREATE INDEX idx_invoices_due_date ON invoices(due_date) WHERE status IN ('unpaid', 'partially_paid');
 CREATE INDEX idx_treatment_items_treatment ON treatment_items(treatment_id);
-CREATE INDEX idx_users_branch ON users(branch_id);
-CREATE INDEX idx_wards_branch ON wards(branch_id);
-CREATE INDEX idx_appointments_branch ON appointments(branch_id);
-CREATE INDEX idx_inventory_items_branch ON inventory_items(branch_id);
-CREATE INDEX idx_invoices_branch ON invoices(branch_id);
-CREATE INDEX idx_expenses_branch ON expenses(branch_id);
 CREATE INDEX idx_staff_conversations_a ON staff_conversations(user_a_id);
 CREATE INDEX idx_staff_conversations_b ON staff_conversations(user_b_id);
 CREATE INDEX idx_staff_messages_conversation_created ON staff_messages(conversation_id, created_at);

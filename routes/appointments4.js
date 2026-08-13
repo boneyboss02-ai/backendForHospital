@@ -162,11 +162,6 @@ router.get('/', authenticate, authorize('admin', 'receptionist', 'doctor', 'nurs
   if (req.user.role !== 'doctor' && isBranchScoped(req)) {
     conditions.push(`a.branch_id = $${i++}`);
     values.push(req.user.branch_id);
-  } else if (req.user.role !== 'doctor' && req.query.branch_id) {
-    // General admin narrowing to one branch — optional, unlike the
-    // forced filter above.
-    conditions.push(`a.branch_id = $${i++}`);
-    values.push(req.query.branch_id);
   }
 
   if (doctor_id) { conditions.push(`a.doctor_id = $${i++}`); values.push(doctor_id); }
@@ -178,11 +173,10 @@ router.get('/', authenticate, authorize('admin', 'receptionist', 'doctor', 'nurs
 
   try {
     const result = await db.query(
-      `SELECT a.*, p.full_name AS patient_name, p.patient_code, u.full_name AS doctor_name, br.name AS branch_name
+      `SELECT a.*, p.full_name AS patient_name, p.patient_code, u.full_name AS doctor_name
        FROM appointments a
        JOIN patients p ON p.id = a.patient_id
        JOIN users u ON u.id = a.doctor_id
-       JOIN branches br ON br.id = a.branch_id
        ${where}
        ORDER BY a.scheduled_at ASC`,
       values
